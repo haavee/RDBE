@@ -66,9 +66,13 @@ Map         = lambda f      : partial(map, f)
 Pam         = lambda *fns   : (lambda x: map(lambda f: f(x), fns))
 Filter      = lambda f      : partial(filter, f)
 Reduce      = lambda f      : partial(functools.reduce, f)
+Type        = lambda **kwargs  : type('', (), kwargs)
 GetN        = itemgetter
 GetA        = attrgetter
 Call        = methodcaller
+# head, tail on lists might be useful!
+head        = GetN(0)
+tail        = GetN(slice(1,None))
 
 def Raise(x):
     raise x
@@ -155,12 +159,12 @@ fileExists = choice(os.path.isfile, identity, compose(Raise, RuntimeError, parti
 vexName    = compose(GetN(0), os.path.splitext, GetN(1), os.path.split)
 
 # input: vexfile name, output: functions generating the names of the output file(s) given a station
-fn_func      = lambda ext: (lambda base: (lambda st: compose("{0}{{0}}.{1}".format(base.lower(), ext.lower()).format, str.lower)))
-#output_files = compose(Map(partial(os.path.join, userinput.output_path)), Pam("{0}.snp".format, "{0}.prc".format),
-output_files = compose(Map(partial(os.path.join, userinput.output_path)), Pam("{0}.snp".format, "{0}.prc".format),
-                       str.lower, vexName, fileExists)
-#output_files = lambda vexobj, station: compose(str.lower, next, Call('iterkeys'), GetA('EXPER'))(next(vexobj['EXPER'].iterkeys()))
-#output_files = lambda vexobj, station: compose(str.lower, next, Call('iterkeys'), GetA('EXPER'))(vexobj)
+fn_func      = lambda ext: (lambda base: compose("{0}{{0}}.{1}".format(base.lower(), ext.lower()).format, str.lower))
+add_prefix   = partial(os.path.join, userinput.output_path)
+output_files = lambda vexobj, station: compose(D, Map(compose(add_prefix, D, ylppa(station))),
+                                               D, Pam(*map(fn_func, ['snp', 'prc', 'lst'])),
+                                               D, str.lower, D, next, Call('iterkeys'), D, GetN('EXPER'))(vexobj)
+
 # we map the userinput.file_exists function over the files and if any of those is true 
 # raise an error
 ok_to_write  = compose(choice(truth,
@@ -225,17 +229,42 @@ refs_for_station = lambda st, modes: reduce(lambda acc, mode:
                                                                      Filter(compose(is_for_station(st), GetN(1))),
                                                                      Filter(compose(needed_refs.__contains__, GetN(0))),
                                                                      list, Call('iteritems'))(mode)) } ) or acc, modes, dict())
+###############################################################################
+##    moving on to decoding
+###############################################################################
 
+mk_vex_lut = lambda sect, defname, key:compose(dict, Map(Pam(head, tail)), Call('getall', key), GetN(defname), GetN(sect))
+#mk_bbc_lut = lambda bbcref: compose(dict, Pam(head, tail), Call('getall', 'BBC_assign'), GetN(bbcref))
 
+# input: - ("mode", ("setupXX", { 'BBC': "BBC-def", 'IF': "IF-def", ... ) 
+#        - vex object
+# transform to:
+#          ("mode", Object(setup="setupXX", procedure="define setupXX 0000000x\n .... enddef\n", firmware="..."))
+def resolve_mode(vexobj):
+    def do_resolve(acc, mode):
+        # destructure the mode "(key, value)" item, where value = "(setup, {})"
+        (modename, (setupname, setup)) = mode
+        # Transform the BBC_assign entries into lookuptable {BBCref: (BBCnum, IFref), ...}
+        bbc_lut = mk_vex_lut('BBC', setup['BBC'], 'BBC_assign')(vexobj)
+        if_lut  = mk_vex_lut('IF' , setup['IF'] , 'if_def')(vexobj)
+        print "bbc: ",bbc_lut
+        print "if : ",if_lut
+        # Loop over all defined frequency channels
+        for fqchan in vexobj['FREQ'][setup['FREQ']].getall('chan_def'):
+            (_, ch_freq, sb, bw, ch_ref, bbc_ref, nix) = fqchan
+
+    return do_resolve
 
 #############################################################
 #        do the work of processing the vex file
 #############################################################
 def process_vex(vexfile):
-    # Do any of the output files exist?
-    files = output_files(vexfile)
-    ok_to_write(files)
     with OpenVex(vexfile) as vexf:
+        # Generate the output file names: destination/<exper><station>.{prc, snp, lst}
+        files = output_files(vexf, userinput.station)
+        # check if they exist and if so if ok to overwrite
+        ok_to_write(files)
+
         # figure out which scans the station should observe
         # we do not extract the scan object(s) from the vexfile yet because
         # we need to retain the order of the scans (if we created a dict { "scanLabel":<scanObject> }
@@ -251,6 +280,8 @@ def process_vex(vexfile):
         # Convert to a dict of {"mode", ("setupXX", {'BBC': <BBC-defname>, 'IF': <IF-defname>, ..}), ... }
         # with the defnames applicable to the desired names
         modes = compose(partial(refs_for_station, userinput.station), Map(enumerate_setups), Map(get_mode(vexf)))(modes)
+
+        setups = reduce(resolve_mode(vexf), modes.iteritems(), {})
         
         print "Scans: ", Map(GetN(0))(scans)
         print "Modes: ", modes
