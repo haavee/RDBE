@@ -1,0 +1,24 @@
+* x.rx - x band receiver parameter definition
+fixed 8080 8580.1
+2002 07 18
+frequency 1.0
+rcp
+  0.00120
+* 6th line: gain curve (only one) for ALL polarizations in 4th line
+* opacity_corrected - optional final field, if present it indicates that
+*                     the curve is opacity corrected
+ELEV POLY 1.0
+rcp 8080.0   9.8 
+end_tcal_table
+* Trec: receiver temperature
+0.0
+* Spill over table
+* 9th and following lines: Spillover versus frequency
+*     Format: Elevation Tspill
+*     where:
+*            POL    polarization rcp or lcp
+*            FREQ   frequency (MHz)
+*            TCAL   degrees K
+*     ends with a line containing end_spillover_table
+*     MAXIMUM ENTRIES 20
+end_spillover_table

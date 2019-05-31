@@ -1,0 +1,151 @@
+define  proc_library  00000000000x
+" BL258A      EB_RDBE2  Eb
+" vex2snap version 2014_nov_06 by DG and UB, MPIfR
+"< RDBE  rack >< Mark5C   recorder 1>
+enddef
+define  exper_initi   00000000000x  
+proc_library
+sched_initi
+enddef
+define  sched_initi   00000000000x
+"setpers
+!+1s
+rdbe_cmd=0,3,dbe_data_send=on:2019123201500:2019124080720:0;
+!+1s
+rdbe_cmd=0,3,dbe_1pps_mon=enable:239.0.2.34:20020;
+!+1s
+rdbe_cmd=0,3,dbe_tsys_mon=enable:239.0.2.34:20021:10;
+!+1s
+rdbe_cmd=0,3,dbe_dot?;
+!+1s
+rdbe_time=dbe0,3
+setdbe1
+getgps
+!+1s
+ready_disk
+!+1s
+enddef
+define  setup01       00000000000x
+pcalon
+"lo=
+lo=loc,7600.00,usb,rcp,1
+lo=loa,7600.00,usb,lcp,1
+rdbe_person=dbe0,pfb
+rdbefclr=dbe0
+rdbef01=dbe0,if0,8160.00,32,lsb,r,15
+rdbef02=dbe0,if1,8160.00,32,lsb,l,15
+rdbef03=dbe0,if0,8192.00,32,lsb,r,14
+rdbef04=dbe0,if1,8192.00,32,lsb,l,14
+rdbef05=dbe0,if0,8224.00,32,lsb,r,13
+rdbef06=dbe0,if1,8224.00,32,lsb,l,13
+rdbef07=dbe0,if0,8288.00,32,lsb,r,11
+rdbef08=dbe0,if1,8288.00,32,lsb,l,11
+rdbef09=dbe0,if0,8480.00,32,lsb,r,5
+rdbef10=dbe0,if1,8480.00,32,lsb,l,5
+rdbef11=dbe0,if0,8512.00,32,lsb,r,4
+rdbef12=dbe0,if1,8512.00,32,lsb,l,4
+rdbef13=dbe0,if0,8544.00,32,lsb,r,3
+rdbef14=dbe0,if1,8544.00,32,lsb,l,3
+rdbef15=dbe0,if0,8576.00,32,lsb,r,2
+rdbef16=dbe0,if1,8576.00,32,lsb,l,2
+rdbe_if=loc,7600.00,usb,rcp,dbe0,if0
+rdbe_if=loa,7600.00,usb,lcp,dbe0,if1
+rdbe_cmd=0,5,dbe_ioch_assign=0:15::1:15::0:14::1:14::0:13::1:13::0:11::1:11::0:5::1:5::0:4::1:4::0:3::1:3::0:2::1:2;
+mk5=fill_pattern=464374526;
+mk5=packet=36:0:5008:0:0;
+mk5=mode=mark5b:0xffffffff:1;
+mk5=play_rate=data:64;
+bank_check
+enddef
+define  setup02       00000000000x
+pcalon
+"lo=
+lo=loa,16072.00,lsb,rcp,1
+lo=loc,16072.00,lsb,lcp,1
+rdbe_person=dbe0,pfb
+rdbefclr=dbe0
+rdbef01=dbe0,if0,15128.00,32,usb,r,2
+rdbef02=dbe0,if1,15128.00,32,usb,l,2
+rdbef03=dbe0,if0,15160.00,32,usb,r,2
+rdbef04=dbe0,if1,15160.00,32,usb,l,2
+rdbef05=dbe0,if0,15192.00,32,usb,r,2
+rdbef06=dbe0,if1,15192.00,32,usb,l,2
+rdbef07=dbe0,if0,15224.00,32,usb,r,2
+rdbef08=dbe0,if1,15224.00,32,usb,l,2
+rdbef09=dbe0,if0,15256.00,32,usb,r,2
+rdbef10=dbe0,if1,15256.00,32,usb,l,2
+rdbef11=dbe0,if0,15288.00,32,usb,r,2
+rdbef12=dbe0,if1,15288.00,32,usb,l,2
+rdbef13=dbe0,if0,15320.00,32,usb,r,2
+rdbef14=dbe0,if1,15320.00,32,usb,l,2
+rdbef15=dbe0,if0,15352.00,32,usb,r,2
+rdbef16=dbe0,if1,15352.00,32,usb,l,2
+rdbe_if=loa,16072.00,lsb,rcp,dbe0,if0
+rdbe_if=loc,16072.00,lsb,lcp,dbe0,if1
+rdbe_cmd=0,5,dbe_ioch_assign=0:3::1:3::0:4::1:4::0:5::1:5::0:6::1:6::0:7::1:7::0:8::1:8::0:9::1:9::0:10::1:10;
+mk5=fill_pattern=464374526;
+mk5=packet=36:0:5008:0:0;
+mk5=mode=mark5b:0xffffffff:1;
+mk5=play_rate=data:64;
+bank_check
+enddef
+define  setup03       00000000000x
+pcalon
+"lo=
+lo=loa,21500.00,usb,rcp,1
+lo=loc,21500.00,usb,lcp,1
+rdbe_person=dbe0,pfb
+rdbefclr=dbe0
+rdbef01=dbe0,if0,22124.00,32,lsb,r,13
+rdbef02=dbe0,if1,22124.00,32,lsb,l,13
+rdbef03=dbe0,if0,22156.00,32,lsb,r,12
+rdbef04=dbe0,if1,22156.00,32,lsb,l,12
+rdbef05=dbe0,if0,22188.00,32,lsb,r,11
+rdbef06=dbe0,if1,22188.00,32,lsb,l,11
+rdbef07=dbe0,if0,22220.00,32,lsb,r,10
+rdbef08=dbe0,if1,22220.00,32,lsb,l,10
+rdbef09=dbe0,if0,22252.00,32,lsb,r,9
+rdbef10=dbe0,if1,22252.00,32,lsb,l,9
+rdbef11=dbe0,if0,22284.00,32,lsb,r,8
+rdbef12=dbe0,if1,22284.00,32,lsb,l,8
+rdbef13=dbe0,if0,22316.00,32,lsb,r,7
+rdbef14=dbe0,if1,22316.00,32,lsb,l,7
+rdbef15=dbe0,if0,22348.00,32,lsb,r,6
+rdbef16=dbe0,if1,22348.00,32,lsb,l,6
+rdbe_if=loa,21500.00,usb,rcp,dbe0,if0
+rdbe_if=loc,21500.00,usb,lcp,dbe0,if1
+rdbe_cmd=0,5,dbe_ioch_assign=0:13::1:13::0:12::1:12::0:11::1:11::0:10::1:10::0:9::1:9::0:8::1:8::0:7::1:7::0:6::1:6;
+mk5=fill_pattern=464374526;
+mk5=packet=36:0:5008:0:0;
+mk5=mode=mark5b:0xffffffff:1;
+mk5=play_rate=data:64;
+bank_check
+enddef
+define  setpers        00000000000x
+rdbe_cmd=dbe0,50,dbe_personality=pfbg:pfbg_1_4.bin
+rdbe_cmd=dbe0,3,dbe_execute=init
+!+2s
+"essr=run,off
+"essr=mode,4
+"essr=route,2,4
+"essr=pace,4,3
+"essr=run,on
+mk5=fill_pattern=464374526;
+mk5=mode=mark5b:0xffffffff:1;
+mk5=packet=36:0:5008:0:0;
+enddef
+define  preob         00000000000x
+ifread
+rdbe_cmd=0,3,dbe_quantize=hold_set;
+!+1s
+op_stream=start
+enddef
+define  start         00000000000
+collect@!,10s
+enddef
+define  collect       00000000000x
+rdbe_tsys=dbe0,if0
+rdbe_tsys=dbe0,if1
+enddef
+define  setdbe1       00000000000x
+enddef

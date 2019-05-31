@@ -1,0 +1,9 @@
+*********STATION SPECIFIC COMMANDS**************
+*COMMAND     SEG SBPA BO
+cal          str 0407 01 FFFFFFFFFFFF
+wx           str 0404 01 FFFFFFFFFFFF
+rx           str 1601 01 FFFFFFFFFFFF
+lo           str 1402 01 FFFFFFFFFFFF
+phasecal     str 3001 01 FFFFFFFFFFFF
+getgps       str 9101 01 FFFFFFFFFFFF
+fmout-gps    qkr 0302 01 FFFFFFFFFFFF

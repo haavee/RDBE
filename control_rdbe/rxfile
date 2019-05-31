@@ -1,0 +1,82 @@
+! This is a comment : file with setups of Effelsberg receivers. Cols are
+!  V or M for VLBA or Mk3/4 setup, total LO freq wanted, receiver named
+! by wavelength in mm, LO frequency required,  phasecal p (pfk) or s (sfk)
+!  rxno. Extra lines for this setup, text to be sent out preceded by >.
+! When changing this file keep same columns.
+! 21cm/18cm change filters via switch.
+! High end of 13cm with 11cm system, need different filter however.
+! 7mm tricks with LO2 to get full MHz total LO, assume SIF1 3125.
+! big cal for 18cm m3 (s9=1), small cal for VLBA
+!
+!--------------------------------------------------------------------------
+! Changes: 
+! Feb 2001 DG     checked setups for 21/18cm
+! Nov 2002 AK     setup changed for 21cm VLBA (S13 instead of S15)
+!--------------------------------------------------------------------------
+! Sum_LO PHC RX    WL   F_OBSE  OTHER
+!
+! An area for UHF stuff..................
+V   250   i  2     300   800
+V   670   i  2     300  1220
+! have to carefully choose boundary....
+V   775   i  1     230  1325 > set switches_c 01000000 00000000 7
+V   850   i  1     210  1400 > set switches_c 01001000 00000000 7
+V  1070   i  1     180  1620 > set switches_c 01000100 00000000 7
+V  1090   i  1     180  1640 > set switches_c 01000100 00000000 7
+V  1110   i  1     180  1660 > set switches_c 01000100 00000000 7
+V  1700   s  6      36  8550
+V  2150   i  6     110  2100
+V  4100   s  2      60  4850
+V  4840   s  2      60  4990
+V  5482   i  1      50  6032
+V  6100   i  1      50  6650
+V  7800   s  6      36  8550
+V  8100   s  6      36  8850
+V  7713   s  6      36  8463
+V 13200   s  4      20 13200
+V 13700   s  4      20 13700
+V 14200   s  4      20 14200
+V 14600   s  4      20 14600
+V 21200   s  4      13 21425
+V 21500   s  4      13 21725
+V 22000   s  4      13 22225
+V 22500   s  4      13 22725
+V 23000   s  4      13 23225
+V 23500   s  4      13 23725
+V 41400   s  4       7 41621 > OBSINP SFU1 751000
+V 41900   s  4       7 42125 > OBSINP SFU1 750000
+V 42300   s  4       7 42521 > OBSINP SFU1 751000
+V 42400   s  4       7 42629 > OBSINP SFU1 749000
+V 42900   s  4       7 43121 > OBSINP SFU1 751000
+V 43400   s  4       7 43625 > OBSINP SFU1 750000
+V 85900   p  3       3 86250
+V 88500   p  3       3 89250
+! An area for UHF stuff..................
+M   650   i  2     300   800
+M  1070   i  2     300  1220
+! have to carefully choose boundary....
+M  1175   i  1     230  1325 > set switches_c 11000000 00000000 7 
+M  1250   i  1     210  1400 > set switches_c 11001000 00000000 7 
+M  1270   i  1     210  1420 > set switches_c 11001000 00000000 7 
+M  1290   i  1     210  1440 > set switches_c 11000010 00000000 7 
+M  1310   i  1     210  1460 > set switches_c 11000010 00000000 7 
+M  1470   i  1     180  1620 > set switches_c 11000100 00000000 7 
+M  1480   i  1     180  1630 > set switches_c 11000100 00000000 7 
+M  1490   i  1     180  1640 > set switches_c 11000100 00000000 7   
+M  1500   i  1     180  1650 > set switches_c 11000100 00000000 7
+M  1510   i  1     180  1660 > set switches_c 11000100 00000000 7
+M  4620   s  2      60  4770
+M  4800   s  2      60  4950
+M  4840   s  2      60  4990
+M  5882   i  1      50  6032
+M  6500   i  1      50  6650
+M  8110   s  6      37  8260
+M  8200   s  6      37  8350
+M  8260   s  6      37  8410
+M  8350   s  6      37  8500
+M 22080   s  4      13 22230
+M 85900   p  3       3 86250
+! hi-if Mk4 set----------------------
+M  4640   s  2      60  4990
+M  8100   s  6      36  8250
+M 21900   s  4      13 22050

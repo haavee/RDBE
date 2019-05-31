@@ -1,0 +1,262 @@
+#!/usr/bin/env python
+# 
+# vex2snap -- convert from VEX file to .snp, .prc file, replacing DRUDG
+#             for RDBE PFB/DDC + Mark5C/Mark6 [running jive5ab] combo
+#
+#   Usage:  vex2snap [options] --station XX [vex1 [vex2 [...]]
+#           see 'vex2snap --help' for [options]
+#
+#   Options:
+#            --help             show short help
+#            --usage            show this built-in help
+#            --version          print version and exit succesfully
+#            --dest             set destination path for output files
+#                               [default: /usr2/sched]
+#            --force            overwrite output files [default: don't!]
+#
+#   Description:
+#
+#   vex2snap reads the vex file(s) and extracts the useful information for the
+#   station indicated by XX. It starts by analyzing the scans where this station
+#   is in and extracting the necessary setups for those.
+#
+#   Based on that information a .prc file with initialization and setup
+#   procedures is created. A snap file containing the actions for the whole
+#   experiment is also output.
+#
+#        xxx.vex => /usr2/sched/xxx.{prc,snp}  [default output path]
+#            Note: if the output file(s) already exist, the program halts.
+#                  This behaviour can be overridden through the --force option
+#  
+#
+import re, os, sys, argparse, itertools
+from functools import reduce, partial
+from operator import *
+from vex.vex import Vex
+
+##########################################################################################
+version = "0.01"
+
+
+################## These should be standard .... #########################################
+compose     = lambda *fns   : (lambda x: reduce(lambda acc, f: f(acc), reversed(fns), x)) # f[0]( f[1]( .. (x) ))
+choice      = lambda p, t, f: (lambda x: t(x) if p(x) else f(x))  # branch
+ylppa       = lambda x      : (lambda f: f(x))                    # ylppa is 'apply' in reverse ...
+combine     = lambda f, *fns: (lambda x: f(*map(ylppa(x), fns)))  # f( fn[0](x), fn[1](x), ... )
+swap_args   = lambda f      : (lambda a, b, *args, **kwargs: f(b, a, *args, **kwargs))
+logic_or    = lambda x, y   : x or y                              # operator.__or__ / __and__ are /bitwise/ ops!
+logic_and   = lambda x, y   : x and y                             #               ..
+const       = lambda x      : (lambda _: x)                       # return the same value irrespective of input
+identity    = lambda x      : x                                   # probably the most undervalued operator
+between     = lambda a, b   : (lambda x: a<=x<b)                  # missing from module 'operator'?
+m_itemgetter= lambda *idx   : (lambda x: map(x.__getitem__, idx)) # _ALWAYS_ returns [...], irrespective of #-of-indices
+                                                                  #   for laughs, look up 'operator.itemgetter()' => 3 (three!)
+                                                                  #   different types of return type depending on arguments! FFS!
+# reorder_args: call f with the arguments indicated by idx:
+# call f with args[idx[n]] for 0 <= n < len(idx)
+# f will be called with len(idx) arguments. can also be used to select/repeat arguments
+reorder_args= lambda f, *idx: (lambda *args, **kwargs: f(*m_itemgetter(*idx)(args), **kwargs))
+hasattr_    = lambda a      : partial(reorder_args(hasattr, 1, 0), a)
+getattr_    = lambda a      : partial(reorder_args(getattr, 1, 0), a)
+# it is "setattr(o, a, v)" but we call it as "setattr_(a, v)(o)" thus a,v,o needs to be reorderd to o, a, v, i.e. 2,0,1
+# note that setattr_ returns the object itself so it can be chained
+setattr_    = lambda a, v   : combine(logic_or, partial(reorder_args(setattr, 2, 0, 1), a, v), identity)
+delattr_    = lambda a      : combine(logic_or, partial(reorder_args(delattr, 1, 0), a), identity)
+Map         = lambda f      : partial(map, f)
+Pam         = lambda *fns   : (lambda x: map(lambda f: f(x), fns))
+Filter      = lambda f      : partial(filter, f)
+Reduce      = lambda f      : partial(functools.reduce, f)
+GetN        = itemgetter
+GetA        = attrgetter
+Call        = methodcaller
+
+def Raise(x):
+    raise x
+
+def MSG(pfx = None):
+    fmt = ("{0}" if pfx is None else pfx+": {0}").format
+    def print_it(x):
+        print fmt(x)
+        return x
+    return print_it
+
+# filterWith - a filter that acts as "sorted(..., key=fn)
+# i.e. filter input based on a predicate on item in stead of on the item
+def filterWith(predicate):
+    def do_filter(inp):
+        result = []
+        for item in inp:
+            predicate(item) and result.append( item )
+        return result
+    return do_filter
+
+
+#############################################################################
+#
+#                      Commandline parsing
+#
+#############################################################################
+class PrintHelp(argparse.Action):
+    def __call__(self, the_parsert, *args):
+        the_parsert.print_help() or sys.exit( 0 )
+
+arg0_or_zero = choice(truth, itemgetter(0), const(0))
+def usage(*args):
+    # http://stackoverflow.com/a/1676860
+    import pydoc, inspect
+    # extract the documentation at the top of this module, put it through pydoc.pager and then exit :-)
+    return compose(const(arg0_or_zero(args)), pydoc.pager, inspect.getcomments, itemgetter(__name__))(sys.modules)
+
+class PrintUsage(argparse.Action):
+    def __call__(self, the_parsert, *args):
+        sys.exit( usage() )
+
+
+parsert = argparse.ArgumentParser(description="Transform VEX files to .snp/.prc", add_help=False)
+parsert.add_argument('--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
+parsert.add_argument('--usage',  nargs=0, action=PrintUsage, help="Show built-in usage")
+parsert.add_argument('--debug',  dest='debug', action='store_true', default=False, 
+                     help="Print debugging information")
+parsert.add_argument('--version', action='version', version=version, help="Print current version and exit succesfully")
+parsert.add_argument('--dest', dest='output_path', type=str, default="/usr2/sched",
+                     help="Location where to store output .prc/.snp files")
+parsert.add_argument('--force', dest='file_exists', action="store_const", const=const(False), default=os.path.isfile,
+                     help="Overwrite existing output files (default: don't)")
+parsert.add_argument('--station', dest='station', type=str, required=True,
+                     help="The station two-letter-codefor which to generate the .prc/.snp files")
+parsert.add_argument("vexfile", nargs='*', help="One or more vexfiles to process")
+
+###################################
+# Actually parse the command line #
+###################################
+userinput = parsert.parse_args()
+
+# Take some actions based on what the user gave us (debug e.g.)
+if userinput.debug:
+    D  = MSG("DEBUG")
+    DD = lambda y: MSG(y)
+else:
+    D  = identity
+    DD = const(identity)
+    def silent_except_hook(tp, val, tb):
+        print str(val)
+    sys.excepthook = silent_except_hook
+
+#################################################################################################
+#
+#                 Handle a single vex file
+#
+#################################################################################################
+fileExists = choice(os.path.isfile, identity, compose(Raise, RuntimeError, partial(add, "File does not exist: ")))
+
+# transform /path/to/file.vex => file
+#  .split() => (/path/to, file.vex)
+#  .splitext() => (file, vex)
+vexName    = compose(GetN(0), os.path.splitext, GetN(1), os.path.split)
+
+# input: vexfile name, output: functions generating the names of the output file(s) given a station
+fn_func      = lambda ext: (lambda base: (lambda st: compose("{0}{{0}}.{1}".format(base.lower(), ext.lower()).format, str.lower)))
+#output_files = compose(Map(partial(os.path.join, userinput.output_path)), Pam("{0}.snp".format, "{0}.prc".format),
+output_files = compose(Map(partial(os.path.join, userinput.output_path)), Pam("{0}.snp".format, "{0}.prc".format),
+                       str.lower, vexName, fileExists)
+#output_files = lambda vexobj, station: compose(str.lower, next, Call('iterkeys'), GetA('EXPER'))(next(vexobj['EXPER'].iterkeys()))
+#output_files = lambda vexobj, station: compose(str.lower, next, Call('iterkeys'), GetA('EXPER'))(vexobj)
+# we map the userinput.file_exists function over the files and if any of those is true 
+# raise an error
+ok_to_write  = compose(choice(truth,
+                              compose(Raise, const(RuntimeError("Output file(s) exist. Use --force to forcibly overwrite"))),
+                              identity),
+                       any, list, Map(userinput.file_exists))
+
+
+###############################################################################
+#
+#                      Dealing with vex content
+#
+###############################################################################
+
+# wrapper to turn opening a vex file into a context so 
+# this works: 
+#    with OpenVex(filename) as vexf: 
+#        <stuff with vexf>
+class OpenVex(object):
+    def __init__(self, filename):
+        self.filename = filename
+    def __enter__(self):
+        self.vex = Vex(self.filename)
+        return self.vex
+    def __exit__(self, e, t, f):
+        return
+
+
+# predicate: does station X participate in scan?
+# Input: [(scanId, scanProperties), (scanId, scanProperties), ...] 
+#        as returned by Vex['SCHED'].iteritems()
+station_observes = lambda x: lambda scan: scan if x in compose(list, Map(GetN(0)), Call('getall', 'station'), GetN(1))(scan) else None
+scan_mode        = compose(GetN('mode'), GetN(1))
+
+# From a MODE extract the IF, FREQ, BBC, TRACKS, PHASE_CAL_DETECT for the requested station.
+# In the VEX file these are ref lines so format is:
+#   ref $REF = <defname> : station : station : ... ;
+#   ref $REF = <defname> : station : station : ... ;
+#
+#   mode.iteritems() gives us a sequence of:
+#      [ (REF-name, [<defname>, station, station, ...]),
+#        (REF-name, [<defname>, station, station, ...], .. ]
+# So we filter the required REF-name's that we need, keeping only the entry
+# where the requested station is in the list of stations following the <defname>.
+# 
+# Eventually we produce a dict with entries like this:
+#       {"mode": ("setupXX", <mode-for-station>)}
+# 
+#  where <mode-for-station> == { 'BBC': "defname>, 'IF': "defname", ... }
+
+
+# extract <vexfile>['MODE'][mode] <object> and set <object>.mode = "mode"
+get_mode         = lambda vexobject: lambda mode: compose(setattr_('mode', mode), GetN(mode), GetN('MODE'))(vexobject)
+# set <mode object>.setup = "setupXX", auto-counting from 1
+enumerate_setups = lambda mode, cnt=itertools.count(1): setattr_('setup', "setup{0:02d}".format(next(cnt)))(mode)
+# Which ref lines we need and how to tell which one applies to a particular station
+needed_refs      = set(['IF', 'FREQ', 'BBC', 'TRACKS', 'PHASE_CAL_DETECT'])
+is_for_station   = lambda station  : lambda l: l[0] if station in l[1:] else None
+refs_for_station = lambda st, modes: reduce(lambda acc, mode:
+                                     acc.update( {mode.mode:(mode.setup,
+                                                             compose(dict, Map(compose(tuple, Pam(GetN(0), compose(GetN(0), GetN(1))))),
+                                                                     Filter(compose(is_for_station(st), GetN(1))),
+                                                                     Filter(compose(needed_refs.__contains__, GetN(0))),
+                                                                     list, Call('iteritems'))(mode)) } ) or acc, modes, dict())
+
+
+
+#############################################################
+#        do the work of processing the vex file
+#############################################################
+def process_vex(vexfile):
+    # Do any of the output files exist?
+    files = output_files(vexfile)
+    ok_to_write(files)
+    with OpenVex(vexfile) as vexf:
+        # figure out which scans the station should observe
+        # we do not extract the scan object(s) from the vexfile yet because
+        # we need to retain the order of the scans (if we created a dict { "scanLabel":<scanObject> }
+        # we could loose the order of scan label. There is no guarantee scan labels contain any useful information.
+        scans = filter(station_observes(userinput.station), vexf['SCHED'].iteritems())
+
+        #if not scans:
+        #    raise RuntimeError("The station '{0}' does not observe any of the scans".format(userinput.station)
+
+        # collect all mode names - they need to be converted into setups
+        modes = reduce(lambda acc, scan: acc.add(scan_mode(scan)) or acc, scans, set())
+
+        # Convert to a dict of {"mode", ("setupXX", {'BBC': <BBC-defname>, 'IF': <IF-defname>, ..}), ... }
+        # with the defnames applicable to the desired names
+        modes = compose(partial(refs_for_station, userinput.station), Map(enumerate_setups), Map(get_mode(vexf)))(modes)
+        
+        print "Scans: ", Map(GetN(0))(scans)
+        print "Modes: ", modes
+    return None
+
+# main loop: iterate over all command line arguments
+main = compose(process_vex, MSG("Start processing"))
+
+map(main, userinput.vexfile)

@@ -1,0 +1,23 @@
+* 13cm.rx - 13cm receiver parameter definition
+range 1900 2400 
+2003 11 03
+frequency 1.0 
+rcp lcp
+0.5 0.5 
+ELEV POLY 1.0 0.0 0.0
+rcp 2100 7.0 
+rcp 2200 7.0 
+rcp 2213 6.5 
+rcp 2216 6.5 
+rcp 2217.0 8.2724
+rcp 2232.0 13.6254
+rcp 2242.0 16.1649
+rcp 2272.0 17.5216
+rcp 2292.0 18.5077
+rcp 2297.0 20.0902
+rcp 2350 13.6 
+lcp 2100 7.0 
+lcp 2350 13.6 
+end_tcal_table
+40.0
+end_spillover_table

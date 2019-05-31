@@ -1,0 +1,11 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[remote "origin"]
+	fetch = +refs/heads/*:refs/remotes/origin/*
+	url = git@gitlab.mpifr-bonn.mpg.de:effelsberg/st-0.0.0_rdbe.git
+[branch "master"]
+	remote = origin
+	merge = refs/heads/master

@@ -1,0 +1,11 @@
+* /usr2/control/dev.ctl
+********** Field System LU control file
+/dev/ttyS16   GPIB board device name
+/dev/ttyS23   Mark III MAT device name
+9600          Mark III MAT baud rate
+/dev/null     Mark III Data Buffer device name
+9600          Mark III Data Buffer baud rate
+/dev/ttyS17   Antenna interface
+/dev/null     Barcode reader device name
+/dev/ttyS18   VLBA MCB device name
+57600         VLBA MCB baud rate

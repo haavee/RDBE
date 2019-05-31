@@ -1,0 +1,31 @@
+fmset.c:time_t unixtime; /* local computer system time */
+fmset.c:	getfmtime(&unixtime,&unixhs,&fstime, &fshs,
+fmset.c:	  fstime=unixtime;
+fmset.c:	disptime=unixtime;
+get4time.c:void get4time(unixtime,unixhs,fstime,fshs,formtime,formhs,raw)
+get4time.c:time_t *unixtime; /* computer time */
+get4time.c:	*unixtime=centisec[2];
+get5btime.c:void get5btime(unixtime,unixhs,fstime,fshs,formtime,formhs,raw,
+get5btime.c:time_t *unixtime; /* computer time */
+get5btime.c:	*unixtime=centisec[2];
+get5btime.c:	  *unixtime+=*unixhs/100;
+getfmtime.c:void getfmtime(unixtime,unixhs,fstime,fshs,formtime,formhs,m5sync,sz_m5sync,
+getfmtime.c:time_t *unixtime; /* computer time */
+getfmtime.c:    getrdbetime(unixtime,unixhs,fstime,fshs,formtime,formhs,&rawch,m5sync,
+getfmtime.c:    get5btime(unixtime,unixhs,fstime,fshs,formtime,formhs,&rawch,m5sync,
+getfmtime.c:    gets2time(s2dev[s2type],unixtime,unixhs,fstime,fshs,formtime,formhs);
+getfmtime.c:      getvtime(unixtime,unixhs,fstime,fshs,formtime,formhs);
+getfmtime.c:    get4time(unixtime,unixhs,fstime,fshs,formtime,formhs,&rawch);
+getrdbetime.c:void getrdbetime(unixtime,unixhs,fstime,fshs,formtime,formhs,raw,
+getrdbetime.c:time_t *unixtime; /* computer time */
+getrdbetime.c:	*unixtime=centisec[2];
+getrdbetime.c:	  *unixtime+=*unixhs/100;
+gets2time.c:void gets2time(dev,unixtime,unixhs,fstime,fshs,formtime,formhs)
+gets2time.c:time_t *unixtime; /* computer time */
+gets2time.c:  *unixtime=centisec[3];
+getvtime.c:void getvtime(unixtime,unixhs,fstime,fshs,formtime,formhs)
+getvtime.c:time_t *unixtime; /* computer time */
+getvtime.c:	*unixtime=centisec[2];
+getvtime.c:	  *unixtime+=*unixhs/100;
+sets2time.c:  time_t unixtime; /* computer time */
+sets2time.c:  gets2time(&unixtime,&unixhs,&fstime,&fshs,&formtime2,&formhs);

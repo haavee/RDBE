@@ -1,0 +1,97 @@
+* 7mm.rx - 7mm receiver parameter definition
+*---------------------------------------------
+* Oct 22, 2002   by AK
+* Oct 15, 2008, gain curve update, by UB
+*---------------------------------------------
+* first line: LO values and ranges, format:
+*  type   frequencies
+* if type is range, the two values: lower and upper frequencies
+* if type is fixed, then one or two fixed value
+* frequencies in MHz
+*
+range 41600 44400
+*
+* 2nd line: creation date
+* format:  yyyy ddd or yyyy mm dd (0 is valid for all for intial set-up)
+*
+2009 03 19
+*
+* 3rd line: FWHM beamwidthm format:
+*   model value
+*
+* if type is frequncy, then fwhm=value*1.22*c/(freq*diameter)
+*                      value is 1.0 if omitted
+* if type is constant, then fwhm=value (degrees)
+*
+* for Effelsberg secondary focus, we use theta = 1.15 *lambda/d
+*
+frequency 0.95
+*
+* 4th line polarizations available
+*
+* one of both of lcp and rcp
+*
+rcp lcp
+*
+* 5th line: DPFU (degrees/Jansky) for polarizations in previous line in order
+*
+0.45 0.45
+*
+* 6th line: gain curve (only one) for ALL polarizations in 4th line
+* TYPE FORM COEFFICENTS ...
+*
+* FORM = POLY only for now
+* TYPE - ELEV and ALTAZ only for now
+* COEFFICENTS - variable number of number values
+*
+* maximum coefficents 10
+*
+*ELEV POLY 0.89713  5.4623E-3  -7.2444E-5
+*Above is probably correct but in GB060B
+ELEV POLY 0.795386 0.0107074 -0.000139207
+* was found UB 17.10.2008
+*
+* 7th and following lines: tcal versus frequency
+*     Format: POL FREQ TCAL
+*     where:
+*            POL    polarization rcp or lcp
+*            FREQ   frequency (MHz)
+*            TCAL   degrees K
+*
+*     MAXIMUM ENTRIES 100, group by polarization
+*                          then sorted by increasing freq
+*
+rcp 41600.0 13.0
+rcp 43046.0 12.9393
+rcp 43078.0 12.9344
+rcp 43110.0 13.4047
+rcp 43142.0 13.5001
+rcp 43174.0 12.7899
+rcp 43206.0 12.4119
+rcp 43234.0 12.3882
+rcp 43266.0 12.7250
+rcp 44400.0 12.5
+lcp 41600.0 14.4
+lcp 43046.0 14.4505
+lcp 43078.0 14.3181
+lcp 43110.0 14.5373
+lcp 43142.0 14.3279
+lcp 43174.0 13.4291
+lcp 43206.0 13.0354
+lcp 43234.0 13.1104
+lcp 43266.0 13.4258
+lcp 44400.0 13.4
+end_tcal_table                                                 
+*                                              
+* Trec: receiver temperature
+0.0 0.0              
+* Spill over table       
+* 9th and following lines: Spillover versus frequency
+*     Format: Elevation Tspill
+*     where:
+*            POL    polarization rcp or lcp
+*            FREQ   frequency (MHz)
+*            TCAL   degrees K
+*     ends with a line containing end_spillover_table
+*     MAXIMUM ENTRIES 20
+end_spillover_table

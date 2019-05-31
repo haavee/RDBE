@@ -1,0 +1,38 @@
+* 1.3cm.rxg - 1.3cm receiver parameter definition
+range 21000 25400
+2006 01 26
+frequency 0.95
+rcp lcp
+0.80 0.80
+ELEV POLY 0.95912609 0.0023538082 -3.3887221e-05 
+rcp 22180.0 4.70
+rcp 22188.0 4.7040
+rcp 22196.0 4.7785
+rcp 22204.0 4.7775
+rcp 22212.0 4.6830
+rcp 22220.0 4.6760
+rcp 22228.0 4.6680
+rcp 22236.0 4.5845
+rcp 22244.0 4.4535
+rcp 22252.0 4.45
+lcp 22180.0 4.86
+lcp 22188.0 4.8595
+lcp 22196.0 4.9920
+lcp 22204.0 5.1375
+lcp 22212.0 5.1890
+lcp 22220.0 5.2995
+lcp 22228.0 5.3145
+lcp 22236.0 5.2220
+lcp 22244.0 5.1475
+lcp 22252.0 5.14
+end_tcal_table
+* Trec--------
+64.1760
+* Spillover against elevation
+90 0
+19 1
+16 2
+14 4 
+12 10
+8  20
+end_spillover_table
