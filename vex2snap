@@ -43,6 +43,7 @@ compose     = lambda *fns   : (lambda x: reduce(lambda acc, f: f(acc), reversed(
 choice      = lambda p, t, f: (lambda x: t(x) if p(x) else f(x))  # branch
 ylppa       = lambda x      : (lambda f: f(x))                    # ylppa is 'apply' in reverse ...
 combine     = lambda f, *fns: (lambda x: f(*map(ylppa(x), fns)))  # f( fn[0](x), fn[1](x), ... )
+method      = lambda f      : (lambda *args, **kwargs: f(*args, **kwargs))
 swap_args   = lambda f      : (lambda a, b, *args, **kwargs: f(b, a, *args, **kwargs))
 logic_or    = lambda x, y   : x or y                              # operator.__or__ / __and__ are /bitwise/ ops!
 logic_and   = lambda x, y   : x and y                             #               ..
@@ -161,9 +162,9 @@ vexName    = compose(GetN(0), os.path.splitext, GetN(1), os.path.split)
 # input: vexfile name, output: functions generating the names of the output file(s) given a station
 fn_func      = lambda ext: (lambda base: compose("{0}{{0}}.{1}".format(base.lower(), ext.lower()).format, str.lower))
 add_prefix   = partial(os.path.join, userinput.output_path)
-output_files = lambda vexobj, station: compose(D, Map(compose(add_prefix, D, ylppa(station))),
-                                               D, Pam(*map(fn_func, ['snp', 'prc', 'lst'])),
-                                               D, str.lower, D, next, Call('iterkeys'), D, GetN('EXPER'))(vexobj)
+output_files = lambda vexobj, station: compose(DD("Output files"), Map(compose(add_prefix, ylppa(station))),
+                                               Pam(*map(fn_func, ['snp', 'prc', 'lst'])),
+                                               str.lower, next, Call('iterkeys'), GetN('EXPER'))(vexobj)
 
 # we map the userinput.file_exists function over the files and if any of those is true 
 # raise an error
@@ -191,7 +192,6 @@ class OpenVex(object):
         return self.vex
     def __exit__(self, e, t, f):
         return
-
 
 # predicate: does station X participate in scan?
 # Input: [(scanId, scanProperties), (scanId, scanProperties), ...] 
@@ -233,8 +233,57 @@ refs_for_station = lambda st, modes: reduce(lambda acc, mode:
 ##    moving on to decoding
 ###############################################################################
 
-mk_vex_lut = lambda sect, defname, key:compose(dict, Map(Pam(head, tail)), Call('getall', key), GetN(defname), GetN(sect))
-#mk_bbc_lut = lambda bbcref: compose(dict, Pam(head, tail), Call('getall', 'BBC_assign'), GetN(bbcref))
+mk_vex_lut = lambda sect, defname, key:compose(DD("VEX lut[{0}.{1}".format(sect,defname)), dict, Map(Pam(head, tail)),
+                                               Call('getall', key), GetN(defname), GetN(sect))
+
+fltMHz     = choice(truth, compose(float, str.strip, partial(re.compile(r'[ \t]*MHz').sub, "")), const(None))
+
+sideband_  = { 'U': 'upper', 'L': 'lower' }
+canon_sb   = compose(sideband_.__getitem__, str.upper)
+canon_pol  = str.upper
+
+class Setup(object):
+    __slots__ = ['setup', 'mode', 'channels', 'track_frame_format']
+
+    def __init__(self, **kwargs):
+        reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Setup.__slots__, self)
+
+    def __repr__(self):
+        return "Setup: {0.setup} [{0.mode}] {0.datarate}Mbps {0.track_frame_format} ".format(self) + self.firmware + \
+               "\n\t".join([""]+map(repr, [] if not self.channels else self.channels))
+
+    @property
+    def firmware(self):
+        if self.channels is None:
+            return None
+        return "PFB" if len(self.channels)>8 else ("DDC4" if len(self.channels)<=4 else "DDC8")
+
+    @property
+    def datarate(self):
+        # sum all bandwidths (units in MHz), multiply by 2 on account of Nyquist
+        return 2 * int(sum(map(GetA('bw'), [] if self.channels is None else self.channels)))
+
+    @property
+    def procedure(self):
+        # generate the procedure text
+        return
+
+####################################################
+#  A snap procedure
+class Procedure(object):
+    def __init__(self, name, *args):
+        # at most 12 characters in procedure name
+        if len(name)>12:
+            raise RuntimeError("SNAP procedure name '{0}' is longer than 12 characters".format(name))
+        self.name  = name
+        self.lines = list(args)
+
+    def append(self, line):
+        self.lines.append(line)
+        return self
+
+    def __str__(self):
+        return "define  {0:<12s} 00000000000x".format(self.name) + "\n".join(self.lines)+"\nenddef\n"
 
 # input: - ("mode", ("setupXX", { 'BBC': "BBC-def", 'IF': "IF-def", ... ) 
 #        - vex object
@@ -244,15 +293,26 @@ def resolve_mode(vexobj):
     def do_resolve(acc, mode):
         # destructure the mode "(key, value)" item, where value = "(setup, {})"
         (modename, (setupname, setup)) = mode
+
         # Transform the BBC_assign entries into lookuptable {BBCref: (BBCnum, IFref), ...}
         bbc_lut = mk_vex_lut('BBC', setup['BBC'], 'BBC_assign')(vexobj)
         if_lut  = mk_vex_lut('IF' , setup['IF'] , 'if_def')(vexobj)
-        print "bbc: ",bbc_lut
-        print "if : ",if_lut
-        # Loop over all defined frequency channels
+
+        # Can already construct the actual setup object
+        nSetup = Setup(mode=modename, setup=setupname, channels=list(),
+                       track_frame_format=vexobj['TRACKS'][setup['TRACKS']]['track_frame_format'])
+
+        # Loop over all defined frequency channels, collect important frequency, lo info
         for fqchan in vexobj['FREQ'][setup['FREQ']].getall('chan_def'):
             (_, ch_freq, sb, bw, ch_ref, bbc_ref, nix) = fqchan
+            (bbc_num, if_ref)                     = bbc_lut[ bbc_ref ]
+            (ABCD, if_pol, if_lo, if_sb, if_pcal) = if_lut[ if_ref ]
+            nSetup.channels.append( Type(bbc=int(bbc_num), abcd=ABCD, pol=canon_pol(if_pol), lo=fltMHz(if_lo),
+                                         sb=canon_sb(if_sb), pcal=fltMHz(if_pcal), bw=fltMHz(bw),
+                                         __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@LO={0.lo:.2f}MHz {0.sb}{0.pol} pcal:{0.pcal}".format))() )
 
+
+        #
     return do_resolve
 
 #############################################################
