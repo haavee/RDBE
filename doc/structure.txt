@@ -1,0 +1,14 @@
+Hi Harro,
+
+the typical folder structure is all in /usr2 and contains
+
+/usr2/fs    # usually a link to the /usr2/fs-9.XXX folder, which contains
+the FS
+/usr2/sched   # vex-files, snap-files ect.
+/usr2/proc     # prc-files
+/usr2/control   # mostly ctl-files, in my case a link to control_rdbe
+/usr2/st          # station code, link to /usr2/st-0.0.0_rdbe
+
+Cheers,
+Uwe
+
