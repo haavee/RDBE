@@ -29,7 +29,8 @@
 #                  This behaviour can be overridden through the --force option
 #  
 #
-import re, os, sys, argparse, itertools
+from __future__ import print_function
+import re, os, sys, copy, argparse, itertools
 from functools import reduce, partial
 from operator import *
 from vex.vex import Vex
@@ -77,11 +78,15 @@ tail        = GetN(slice(1,None))
 
 def Raise(x):
     raise x
+def Error(f):
+    def do_it(x):
+        raise RuntimeError(f(x))
+    return do_it
 
 def MSG(pfx = None):
     fmt = ("{0}" if pfx is None else pfx+": {0}").format
     def print_it(x):
-        print fmt(x)
+        print(fmt(x))
         return x
     return print_it
 
@@ -95,6 +100,14 @@ def filterWith(predicate):
         return result
     return do_filter
 
+# this implementation is not the shortest partition() but it is the fastest
+#  (pred, list) => (true_list, false_list)
+def partition(pred, l):
+    ltrue, lfalse = (list(), list())
+    for item in l:
+        (ltrue if pred(item) else lfalse).append( item )
+    return (ltrue, lfalse)
+Partition = lambda pred: (lambda l: partition(pred, l))
 
 #############################################################################
 #
@@ -144,7 +157,7 @@ else:
     D  = identity
     DD = const(identity)
     def silent_except_hook(tp, val, tb):
-        print str(val)
+        print(str(val))
     sys.excepthook = silent_except_hook
 
 #################################################################################################
@@ -236,11 +249,59 @@ refs_for_station = lambda st, modes: reduce(lambda acc, mode:
 mk_vex_lut = lambda sect, defname, key:compose(DD("VEX lut[{0}.{1}".format(sect,defname)), dict, Map(Pam(head, tail)),
                                                Call('getall', key), GetN(defname), GetN(sect))
 
+# shorthands for converting vex file values to canonical things
 fltMHz     = choice(truth, compose(float, str.strip, partial(re.compile(r'[ \t]*MHz').sub, "")), const(None))
-
-sideband_  = { 'U': 'upper', 'L': 'lower' }
+sideband_  = { 'U': 'usb', 'L': 'lsb' }
 canon_sb   = compose(sideband_.__getitem__, str.upper)
-canon_pol  = str.upper
+canon_pol  = str.lower
+canon_if   = str.lower
+# there is a mapping of IF_A/B => input 0 and C/D to 1
+inp_zero   = "AaBb"
+inp_one    = "CcDd"
+if_to_inp  = choice(inp_zero.__contains__, const(0),
+                    choice(inp_one.__contains__, const(1),
+                           Error("No known mapping for IF{0} to RDBE input".format)))
+
+pfb_split  = compose(enumerate, Filter(truth), Partition(lambda x: x.sb == 'lsb'))
+chet_fh    = [1024,1008,976,944,912,880,848,816,784,752,720,688,656,624,592,560];
+lookup_fh  = choice(chet_fh.__contains__, chet_fh.index, Error("Unmapped PFB channel frequency {0}".format))
+#mk_ifcnt   = lambda: {0:itertools.count(), 1:itertools.count()}
+
+# functions to generate the proper fqlist depending on the firmware
+def fqlist_pfb(channels):
+    # put all channels of one kind of sideband in one DBE, filter out
+    # ones that don't have channels and enumerate the resulting channel lists
+    dbes, fqs = (list(), list())
+    los       = dict()
+
+    for dbe, ch_list in pfb_split(channels):
+        # must clear the rdbe
+        dbes.append( "rdbe_person=dbe{dbe},pfb".format(dbe=dbe) )
+        dbes.append( "rdbefclr=dbe{dbe}".format(dbe=dbe) )
+        # count channels per IF
+        ifcnt = itertools.count(1) #mk_ifcnt()
+        for ch in ch_list:
+            ch_frq = int(ch.freq - ch.lo)
+            iif    = if_to_inp(ch.abcd)
+            # did we set the LO for this IF,input?
+            loc    = "rdbe_if=lo{0}".format( ch.abcd.lower() )
+            if (loc, iif) not in los:
+                los[(loc, iif)] = loc+",{ch.lo:.2f},{ch.sb},{ch.pol},dbe{dbe},if{iif}".format(ch=ch, dbe=dbe, iif=iif)
+            # look up the channel number
+            fqs.append( "rdbef{chan:02d}=dbe{dbe},if{iif},{ch.freq:.2f},{ch.bw},{ch.sb},{ch.pol},{ich}".format(
+                        dbe=dbe, chan=next(ifcnt), iif=iif, ch=ch, ich=lookup_fh(ch_frq)) )
+    return dbes+fqs+los.values()
+
+def fqlist_ddc4(channels):
+    return []
+
+def fqlist_ddc8(channels):
+    return []
+
+# lookup table
+fqlist_fn   = {'PFB': fqlist_pfb, 'DDC4': fqlist_ddc4, 'DDC8': fqlist_ddc8 }
+make_fqlist = choice(fqlist_fn.__contains__, fqlist_fn.__getitem__, 
+                     compose(Raise, RuntimeError, "No make_fqlist for firmware {0}".format))
 
 class Setup(object):
     __slots__ = ['setup', 'mode', 'channels', 'track_frame_format']
@@ -265,25 +326,32 @@ class Setup(object):
 
     @property
     def procedure(self):
+        if self.channels is None:
+            raise RuntimeError("No channels defined for setup {0}".format(self.setup))
         # generate the procedure text
-        return
+        return Procedure(self.setup, make_fqlist(self.firmware)(self.channels))
+
+
+
+
 
 ####################################################
 #  A snap procedure
+####################################################
 class Procedure(object):
-    def __init__(self, name, *args):
+    def __init__(self, name, init_list=None):
         # at most 12 characters in procedure name
         if len(name)>12:
             raise RuntimeError("SNAP procedure name '{0}' is longer than 12 characters".format(name))
         self.name  = name
-        self.lines = list(args)
+        self.lines = copy.deepcopy(init_list if init_list is not None else list())
 
     def append(self, line):
         self.lines.append(line)
         return self
 
     def __str__(self):
-        return "define  {0:<12s} 00000000000x".format(self.name) + "\n".join(self.lines)+"\nenddef\n"
+        return "\ndefine  {0: <12s} 00000000000x\n".format(self.name) + "\n".join(self.lines)+"\nenddef"
 
 # input: - ("mode", ("setupXX", { 'BBC': "BBC-def", 'IF': "IF-def", ... ) 
 #        - vex object
@@ -308,10 +376,10 @@ def resolve_mode(vexobj):
             (bbc_num, if_ref)                     = bbc_lut[ bbc_ref ]
             (ABCD, if_pol, if_lo, if_sb, if_pcal) = if_lut[ if_ref ]
             nSetup.channels.append( Type(bbc=int(bbc_num), abcd=ABCD, pol=canon_pol(if_pol), lo=fltMHz(if_lo),
-                                         sb=canon_sb(if_sb), pcal=fltMHz(if_pcal), bw=fltMHz(bw),
+                                         sb=canon_sb(if_sb), pcal=fltMHz(if_pcal), bw=fltMHz(bw), freq=fltMHz(ch_freq),
                                          __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@LO={0.lo:.2f}MHz {0.sb}{0.pol} pcal:{0.pcal}".format))() )
 
-
+        print(nSetup.procedure)
         #
     return do_resolve
 
@@ -342,9 +410,14 @@ def process_vex(vexfile):
         modes = compose(partial(refs_for_station, userinput.station), Map(enumerate_setups), Map(get_mode(vexf)))(modes)
 
         setups = reduce(resolve_mode(vexf), modes.iteritems(), {})
-        
-        print "Scans: ", Map(GetN(0))(scans)
-        print "Modes: ", modes
+
+        procedure = Procedure("sched_")
+        procedure.append('" BP229B EB_RDBE2 Eb')
+
+        print("Scans: ", Map(GetN(0))(scans))
+        print("Modes: ", modes)
+        print("Procedures:")
+        print(procedure)
     return None
 
 # main loop: iterate over all command line arguments
