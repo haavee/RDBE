@@ -928,7 +928,7 @@ sub vextime_2_secs {
   $ly=$1;
   $ssec=$2*86400+$3*3600+$4*60+$5+$dsec;
   $string=$ssec;
-# print "$ftt $string\n";
+# print "$ftt $string dsec=$dsec\n";
   $string;
 }
 sub secs_2_fstime {

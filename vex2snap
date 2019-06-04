@@ -13,6 +13,9 @@
 #            --dest             set destination path for output files
 #                               [default: /usr2/sched]
 #            --force            overwrite output files [default: don't!]
+#            --ignore-utc       do not forget scans from the past
+#                               [default: only process scheduled scans
+#                               that are still observable - i.e. in the future]
 #
 #   Description:
 #
@@ -30,7 +33,7 @@
 #  
 #
 from __future__ import print_function
-import re, os, sys, copy, argparse, itertools
+import re, os, sys, copy, argparse, itertools, datetime
 from functools import reduce, partial
 from operator import *
 from vex.vex import Vex
@@ -65,10 +68,13 @@ getattr_    = lambda a      : partial(reorder_args(getattr, 1, 0), a)
 setattr_    = lambda a, v   : combine(logic_or, partial(reorder_args(setattr, 2, 0, 1), a, v), identity)
 delattr_    = lambda a      : combine(logic_or, partial(reorder_args(delattr, 1, 0), a), identity)
 Map         = lambda f      : partial(map, f)
+StarMap     = lambda f      : partial(itertools.starmap, f)
 Pam         = lambda *fns   : (lambda x: map(lambda f: f(x), fns))
 Filter      = lambda f      : partial(filter, f)
-Reduce      = lambda f      : partial(functools.reduce, f)
+Reduce      = lambda f, *a  : partial(reduce, f, *a)
+Zip         = lambda l      : (lambda x: zip(l,x))
 Type        = lambda **kwargs  : type('', (), kwargs)
+is_none     = partial(is_, None)
 GetN        = itemgetter
 GetA        = attrgetter
 Call        = methodcaller
@@ -82,6 +88,8 @@ def Error(f):
     def do_it(x):
         raise RuntimeError(f(x))
     return do_it
+Assert  = lambda x, *args, **kwargs: Raise(AssertionError(*args, **kwargs)) if not x else None
+AssertF = lambda f, *args, **kwargs: (lambda x: Assert(f(x), *args, **kwargs))
 
 def MSG(pfx = None):
     fmt = ("{0}" if pfx is None else pfx+": {0}").format
@@ -108,6 +116,20 @@ def partition(pred, l):
         (ltrue if pred(item) else lfalse).append( item )
     return (ltrue, lfalse)
 Partition = lambda pred: (lambda l: partition(pred, l))
+
+###################################################
+#       Some time-related functionality
+###################################################
+
+# convert any sequence of (doy, hh, mm, ss) into seconds-within-year
+yhms2sec    = compose(sum, StarMap(mul), Zip([86400, 3600, 60, 1]), Map(int))
+# extract those values from an utctimetuple()
+utsec_year  = compose(yhms2sec, GetA('tm_yday', 'tm_hour', 'tm_min', 'tm_sec'), Call('utctimetuple'))
+# extract them from a VEX time stamp 
+vextime2sec = compose(yhms2sec, Call('groups'), re.compile(r"^\d+y(\d+)d(\d+)h(\d+)m(\d+)s$").match,
+                      partial(re.sub, r"[ \t\n]*", r""))
+utcsec_now  = utsec_year( datetime.datetime.utcnow() )
+
 
 #############################################################################
 #
@@ -142,6 +164,8 @@ parsert.add_argument('--force', dest='file_exists', action="store_const", const=
                      help="Overwrite existing output files (default: don't)")
 parsert.add_argument('--station', dest='station', type=str, required=True,
                      help="The station two-letter-codefor which to generate the .prc/.snp files")
+parsert.add_argument('--ignore-utc', dest="utc_limit", default=utcsec_now, action="store_const", const=0,
+                     help="Ignore current UTC time - i.e. just process all scans even when they cannot be observed anymore")
 parsert.add_argument("vexfile", nargs='*', help="One or more vexfiles to process")
 
 ###################################
@@ -206,11 +230,56 @@ class OpenVex(object):
     def __exit__(self, e, t, f):
         return
 
-# predicate: does station X participate in scan?
-# Input: [(scanId, scanProperties), (scanId, scanProperties), ...] 
-#        as returned by Vex['SCHED'].iteritems()
-station_observes = lambda x: lambda scan: scan if x in compose(list, Map(GetN(0)), Call('getall', 'station'), GetN(1))(scan) else None
-scan_mode        = compose(GetN('mode'), GetN(1))
+vexyear     = compose(GetN(0), Map(int), Call('groups'),
+                      re.compile(r"^(\d+)y\d+d\d+h\d+m\d+s$").match, partial(re.sub, r"[ \t\n]*", r""))
+
+def s2v_r(acc, x):
+    (whole, remain) = divmod(acc.time, x[0])
+    acc.time_s     += x[1](whole)
+    acc.time        = remain
+    return acc
+sec2vextime = compose(GetA('time_s'), AssertF(compose(not_, GetA('time')), "Non-integer second time stamp is unacceptable"),
+                      Reduce(s2v_r, [(86400, "{0}d".format), (3600, "{0:02d}h".format),
+                                     (60, "{0:02d}m".format), (1, "{0:02d}s".format)]),
+                      lambda x: Type(time_s="", time=x))
+intSec      = compose(int, str.strip, partial(re.sub, r"s(ec)?", r""))
+
+
+class Scan(object):
+    __slots__ = ['mode', 'label', 'nominal_start', 'source', 'offset', 'duration', 'year']
+
+    # initialize from keywordargs
+    def __init__(self, **kwargs):
+        reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Scan.__slots__, self)
+        Assert(self.duration>self.offset, "Attempt to observe scan where data-good > scan duration")
+
+    @property
+    def start(self):
+        return self.nominal_start + self.offset
+    @property
+    def end(self):
+        return self.nominal_start + self.duration
+
+
+def station_scan(station):
+    # scan == (scanId, <vex scan obj>)
+    def station_observes(scan):
+        (scanId, scanObj) = scan
+        #station=Eb:    0 sec:  620 sec:   42.961 GB:   :       : 0;
+        #        0      1       2          3               4      5
+        station_line      = filter(compose(partial(eq, station), GetN(0)), scanObj.getall('station'))
+        station_line      = station_line[0] if station_line else None
+        if not station_line:
+            return None
+        return Scan(mode=scanObj['mode'], nominal_start=vextime2sec(scanObj['start']),
+                    source=scanObj['source'], offset=intSec(station_line[1]), label=scanId,
+                    year=vexyear(scanObj['start']), duration=intSec(station_line[2]))
+    return station_observes
+
+# Filter the list of scans for the indicated station and also
+# filter out the ones that are in the past
+end_in_future     = compose(partial(lt, userinput.utc_limit), DD("scan-end"), GetA('end'))
+get_station_scans = lambda station: compose(Filter(end_in_future), Filter(truth), Map(station_scan(station)), Call('iteritems'), GetN('SCHED'))
 
 # From a MODE extract the IF, FREQ, BBC, TRACKS, PHASE_CAL_DETECT for the requested station.
 # In the VEX file these are ref lines so format is:
@@ -242,6 +311,7 @@ refs_for_station = lambda st, modes: reduce(lambda acc, mode:
                                                                      Filter(compose(is_for_station(st), GetN(1))),
                                                                      Filter(compose(needed_refs.__contains__, GetN(0))),
                                                                      list, Call('iteritems'))(mode)) } ) or acc, modes, dict())
+
 ###############################################################################
 ##    moving on to decoding
 ###############################################################################
@@ -255,6 +325,8 @@ sideband_  = { 'U': 'usb', 'L': 'lsb' }
 canon_sb   = compose(sideband_.__getitem__, str.upper)
 canon_pol  = str.lower
 canon_if   = str.lower
+pcal_state = choice(is_none, const("pcaloff"), const("pcalon"))
+canon_pcal = choice(is_none, const("off"), int)
 # there is a mapping of IF_A/B => input 0 and C/D to 1
 inp_zero   = "AaBb"
 inp_one    = "CcDd"
@@ -263,34 +335,50 @@ if_to_inp  = choice(inp_zero.__contains__, const(0),
                            Error("No known mapping for IF{0} to RDBE input".format)))
 
 pfb_split  = compose(enumerate, Filter(truth), Partition(lambda x: x.sb == 'lsb'))
+#chet's 'upper edge' table, modified to add 1024, leave out 528
+# (verbatim from vex2snap.pl)
 chet_fh    = [1024,1008,976,944,912,880,848,816,784,752,720,688,656,624,592,560];
 lookup_fh  = choice(chet_fh.__contains__, chet_fh.index, Error("Unmapped PFB channel frequency {0}".format))
 #mk_ifcnt   = lambda: {0:itertools.count(), 1:itertools.count()}
 
-# functions to generate the proper fqlist depending on the firmware
+###############################################################################
+#
+#  Process the channels based on deduced type of firmware
+#  and generate the RDBE procedure
+#
+###############################################################################
 def fqlist_pfb(channels):
     # put all channels of one kind of sideband in one DBE, filter out
     # ones that don't have channels and enumerate the resulting channel lists
     dbes, fqs = (list(), list())
     los       = dict()
+    rdbe_los  = dict()
+    pcal_s    = set()  # set of pcal states, can assert we only have one
 
     for dbe, ch_list in pfb_split(channels):
         # must clear the rdbe
         dbes.append( "rdbe_person=dbe{dbe},pfb".format(dbe=dbe) )
         dbes.append( "rdbefclr=dbe{dbe}".format(dbe=dbe) )
         # count channels per IF
-        ifcnt = itertools.count(1) #mk_ifcnt()
-        for ch in ch_list:
+        for (chan, ch) in enumerate(ch_list, start=1):
+            Assert(chan<=16, "Cannot do more than 16 channels per RDBE input")
+            # convert channel properties to stuff we need
             ch_frq = int(ch.freq - ch.lo)
             iif    = if_to_inp(ch.abcd)
-            # did we set the LO for this IF,input?
-            loc    = "rdbe_if=lo{0}".format( ch.abcd.lower() )
+            # Get current pcal state
+            pcal_s.add( pcal_state(ch.pcal) )
+            # did we set the LO for this (IF,input)?
+            loc    = "lo{0}".format( ch.abcd.lower() )
             if (loc, iif) not in los:
-                los[(loc, iif)] = loc+",{ch.lo:.2f},{ch.sb},{ch.pol},dbe{dbe},if{iif}".format(ch=ch, dbe=dbe, iif=iif)
-            # look up the channel number
+                los[(loc, iif)]      = "lo="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{pcal}".format(ch=ch, pcal=canon_pcal(ch.pcal))
+                rdbe_los[(loc, iif)] = "rdbe_if="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,dbe{dbe},if{iif}".format(ch=ch, dbe=dbe, iif=iif)
+            # Append a line describing this channel
             fqs.append( "rdbef{chan:02d}=dbe{dbe},if{iif},{ch.freq:.2f},{ch.bw},{ch.sb},{ch.pol},{ich}".format(
-                        dbe=dbe, chan=next(ifcnt), iif=iif, ch=ch, ich=lookup_fh(ch_frq)) )
-    return dbes+fqs+los.values()
+                        dbe=dbe, chan=chan, iif=iif, ch=ch, ich=lookup_fh(abs(ch_frq))) )
+
+    # assert there's only one pcal state
+    Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
+    return los.values()+dbes+fqs+rdbe_los.values()
 
 def fqlist_ddc4(channels):
     return []
@@ -303,6 +391,10 @@ fqlist_fn   = {'PFB': fqlist_pfb, 'DDC4': fqlist_ddc4, 'DDC8': fqlist_ddc8 }
 make_fqlist = choice(fqlist_fn.__contains__, fqlist_fn.__getitem__, 
                      compose(Raise, RuntimeError, "No make_fqlist for firmware {0}".format))
 
+
+#################################################
+# describe a setup from the VEX file
+#################################################
 class Setup(object):
     __slots__ = ['setup', 'mode', 'channels', 'track_frame_format']
 
@@ -326,8 +418,7 @@ class Setup(object):
 
     @property
     def procedure(self):
-        if self.channels is None:
-            raise RuntimeError("No channels defined for setup {0}".format(self.setup))
+        Assert(self.channels is not None, "No channels defined for setup {0}".format(self.setup))
         # generate the procedure text
         return Procedure(self.setup, make_fqlist(self.firmware)(self.channels))
 
@@ -341,8 +432,7 @@ class Setup(object):
 class Procedure(object):
     def __init__(self, name, init_list=None):
         # at most 12 characters in procedure name
-        if len(name)>12:
-            raise RuntimeError("SNAP procedure name '{0}' is longer than 12 characters".format(name))
+        Assert(len(name)<=12, "SNAP procedure name '{0}' is longer than 12 characters".format(name))
         self.name  = name
         self.lines = copy.deepcopy(init_list if init_list is not None else list())
 
@@ -378,7 +468,6 @@ def resolve_mode(vexobj):
             nSetup.channels.append( Type(bbc=int(bbc_num), abcd=ABCD, pol=canon_pol(if_pol), lo=fltMHz(if_lo),
                                          sb=canon_sb(if_sb), pcal=fltMHz(if_pcal), bw=fltMHz(bw), freq=fltMHz(ch_freq),
                                          __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@LO={0.lo:.2f}MHz {0.sb}{0.pol} pcal:{0.pcal}".format))() )
-
         print(nSetup.procedure)
         #
     return do_resolve
@@ -397,13 +486,14 @@ def process_vex(vexfile):
         # we do not extract the scan object(s) from the vexfile yet because
         # we need to retain the order of the scans (if we created a dict { "scanLabel":<scanObject> }
         # we could loose the order of scan label. There is no guarantee scan labels contain any useful information.
-        scans = filter(station_observes(userinput.station), vexf['SCHED'].iteritems())
+        #scans = filter(station_scan(userinput.station), vexf['SCHED'].iteritems())
+        scans = get_station_scans(userinput.station)( vexf )
 
-        #if not scans:
-        #    raise RuntimeError("The station '{0}' does not observe any of the scans".format(userinput.station)
+        Assert(scans, "The station '{0}' does not observe any of the scans".format(userinput.station))
 
         # collect all mode names - they need to be converted into setups
-        modes = reduce(lambda acc, scan: acc.add(scan_mode(scan)) or acc, scans, set())
+        modes = compose(set, Map(GetA('mode')))(scans)
+        #modes = reduce(lambda acc, scan: acc.add(scan_mode(scan)) or acc, scans, set())
 
         # Convert to a dict of {"mode", ("setupXX", {'BBC': <BBC-defname>, 'IF': <IF-defname>, ..}), ... }
         # with the defnames applicable to the desired names
@@ -414,7 +504,7 @@ def process_vex(vexfile):
         procedure = Procedure("sched_")
         procedure.append('" BP229B EB_RDBE2 Eb')
 
-        print("Scans: ", Map(GetN(0))(scans))
+        print("Scans: ", Map(GetA('label'))(scans))
         print("Modes: ", modes)
         print("Procedures:")
         print(procedure)
