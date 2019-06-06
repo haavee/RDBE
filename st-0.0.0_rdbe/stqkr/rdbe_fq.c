@@ -46,10 +46,14 @@ int itask;
     if(ibm1 ==0){
           ibm10=-1;ibm11=-1;
     }
+    if( sscanf(command->argv[0], "dbe%d", &dbe_num)==0 )
+        sscanf(command->argv[0], "%d", &dbe_num);
+/*
     if(strncmp(command->argv [0],"0",1) == 0){dbe_num=0;}  //dbe 0
     if(strncmp(command->argv [0],"1",1) == 0){dbe_num=1;}  //dbe 1
     if(strncmp(command->argv [0],"dbe0",4) == 0){dbe_num=0;}  //dbe 0
     if(strncmp(command->argv [0],"dbe1",4) == 0){dbe_num=1;}  //dbe 0
+*/
 
 /*make a DDC number*/
 //    printf("DBGFQIBM1 dbe_num=%d ibm1/10/11 %d %d %d\n",dbe_num,ibm1,ibm10,ibm11);
@@ -65,10 +69,12 @@ int itask;
     }
 //    printf("DBGFQIBM2 dbe_num=%d ibm1/10/11 %d %d %d\n",dbe_num,ibm1,ibm10,ibm11);
 
-    if(strncmp(command->argv[1],"if0",3) == 0){ iif=0; } else { iif=1; }
+//    if(strncmp(command->argv[1],"if0",3) == 0){ iif=0; } else { iif=1; }
+    sscanf(command->argv[1],"if%d",&iif);
     sscanf(command->argv[2],"%lf",&rfq);
     sscanf(command->argv[3],"%f",&bw);
-    if(strncmp(command->argv[5],"r",1) == 0){pol='r';} else {pol='l';}
+//    if(strncmp(command->argv[5],"r",1) == 0){pol='r';} else {pol='l';}
+    sscanf(command->argv[5],"%c", &pol);
     sscanf(command->argv[6],"%d",&itk);
     if(strncmp(command->argv[4],"lsb",3) == 0){
       if(dbe_num == 0)stm_addr->rdbe0_chanfreq[ibm10]=rfq-bw/2.0;
