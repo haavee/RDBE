@@ -794,7 +794,7 @@ sub make_cfg_ddc {
      if($cif eq 'B' ){$iif=0;} if($cif eq 'D' ){$iif=1;}
      $ixf=$iif; if($ixf >1){$ixf=$iif-2;}
      $xbar[$im1]=$sub+$ixf*4;
-     $xcfg[$ie]=$im1.":".$deci.":".$sfdds.":".$bb_mode;
+     $xcfg[$ie]=$mm1.":".$deci.":".$sfdds.":".$bb_mode;
 #    print "DBG613 ie,im1=$ie $im1\n";
    }
 #  for($i=0;$i < $ne;$i++){
