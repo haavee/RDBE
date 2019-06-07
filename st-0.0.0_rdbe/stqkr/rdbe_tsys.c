@@ -34,10 +34,14 @@ int itask;
    if(command->argv [0] !=NULL ){
      strcpy(tsysch,command->argv[0]);
      strcat(tsysch,",");
+     if( sscanf(command->argv[0], "%d", &dbe_num)==0 )
+         sscanf(command->argv[0], "dbe%d", &dbe_num);
+#if 0
      if(strncmp(command->argv [0],"0",1) == 0)dbe_num=0;  //dbe 0
      if(strncmp(command->argv [0],"1",1) == 0)dbe_num=1;  //dbe 1
      if(strncmp(command->argv [0],"dbe0",4) == 0)dbe_num=0;  //dbe 0
      if(strncmp(command->argv [0],"dbe1",4) == 0)dbe_num=1;  //dbe 1
+#endif
      if(command->argv [1] !=NULL ){
        strcat(tsysch,command->argv[1]);
        strcat(tsysch,",");
