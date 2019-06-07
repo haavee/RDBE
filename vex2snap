@@ -79,6 +79,7 @@ Reduce      = lambda f, *a  : partial(reduce, f, *a)
 Sorted      = lambda **kws  : partial(sorted, **kws)
 GroupBy     = lambda f      : (lambda l: itertools.groupby(l, f))
 Zip         = lambda l      : (lambda x: zip(l,x))
+Slice       = lambda *args  : (lambda o: getitem(o, slice(*args)))
 XformItem   = lambda n, f   : (lambda o: setitem_(n, f(o[n])))
 Type        = lambda **kwargs  : type('', (), kwargs)
 all_equal   = compose(lambda g: next(g, True) and not next(g, False), itertools.groupby)
@@ -86,6 +87,7 @@ is_none     = partial(is_, None)
 GetN        = itemgetter
 GetA        = attrgetter
 Call        = methodcaller
+DDict       = collections.defaultdict
 # head, tail on lists might be useful!
 head        = GetN(0)
 tail        = GetN(slice(1,None))
@@ -139,6 +141,15 @@ vextime2sec = compose(yhms2sec, Call('groups'), re.compile(r"^\d+y(\d+)d(\d+)h(\
                       partial(re.sub, r"[ \t\n]*", r""))
 utcsec_now  = utsec_year( datetime.datetime.utcnow() )
 
+###################################################
+#       Supported recorders
+###################################################
+
+class Mark5C(object):
+    __repr__ = method(const("Mark5C"))
+
+class Mark6(object):
+    __repr__ = method(const("Mark6"))
 
 #############################################################################
 #
@@ -160,6 +171,11 @@ class PrintUsage(argparse.Action):
     def __call__(self, the_parsert, *args):
         sys.exit( usage() )
 
+# an action which (attempts to) map a recorder type string into an actual type
+recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6}
+recorder_type     = compose(choice(recorder_mapping.__contains__, recorder_mapping.__getitem__,
+                            Error("Unknown recorder type {0}".format)), str.lower)
+
 
 parsert = argparse.ArgumentParser(description="Transform VEX files to .snp/.prc", add_help=False)
 parsert.add_argument('--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
@@ -173,6 +189,8 @@ parsert.add_argument('--force', dest='file_exists', action="store_const", const=
                      help="Overwrite existing output files (default: don't)")
 parsert.add_argument('--station', dest='station', type=str, required=True,
                      help="The station two-letter-codefor which to generate the .prc/.snp files")
+parsert.add_argument('--recorder', dest='recorder', type=recorder_type, 
+                     help="The recorder type (Mark5C, Mark6) to use")
 parsert.add_argument('--ignore-utc', dest="utc_limit", default=utcsec_now, action="store_const", const=0,
                      help="Ignore current UTC time - i.e. just process all scans even when they cannot be observed anymore")
 parsert.add_argument("vexfile", nargs='*', help="One or more vexfiles to process")
@@ -209,7 +227,7 @@ vexName    = compose(GetN(0), os.path.splitext, GetN(1), os.path.split)
 fn_func      = lambda ext: (lambda base: compose("{0}{{0}}.{1}".format(base.lower(), ext.lower()).format, str.lower))
 add_prefix   = partial(os.path.join, userinput.output_path)
 output_files = lambda vexobj, station: compose(DD("Output files"), Map(compose(add_prefix, ylppa(station))),
-                                               Pam(*map(fn_func, ['snp', 'prc', 'lst'])),
+                                               Pam(*map(fn_func, ['snp', 'prc', 'lst'])), Slice(0,6),
                                                str.lower, next, Call('iterkeys'), GetN('EXPER'))(vexobj)
 
 # Filter the given list-of-files using userinput.file_exists. Non-empty list raises an error.
@@ -286,7 +304,7 @@ def station_scan(station):
 
 # Filter the list of scans for the indicated station and also
 # filter out the ones that are in the past
-end_in_future     = compose(partial(lt, userinput.utc_limit), DD("scan-end"), GetA('end'))
+end_in_future     = compose(partial(lt, userinput.utc_limit), GetA('end'))
 get_station_scans = lambda station: compose(Filter(end_in_future), Filter(truth), Map(station_scan(station)), Call('iteritems'), GetN('SCHED'))
 
 # From a MODE extract the IF, FREQ, BBC, TRACKS, PHASE_CAL_DETECT for the requested station.
@@ -382,14 +400,15 @@ mk_ioch = lambda l: reduce(mk_ioch_, l, list())
 def fqlist_pfb(channels):
     # put all channels of one kind of sideband in one DBE, filter out
     # ones that don't have channels and enumerate the resulting channel lists
-    dbes, fqs      = (list(), list())
+    fqs            = list()
     los, rdbe_los  = (dict(), dict())
-    clrs           = collections.defaultdict(list)
+    clrs           = DDict(list)
     # Keep a mapping of DBE => [CHref => (inp, ch)] in order to be able 
     # to generate the correct "dbe_ioch_assign" command
-    iochs          = collections.defaultdict(dict)   # map (CHref) => (inp, ch)
+    iochs          = DDict(dict)   # map (CHref) => (inp, ch)
     pcal_s         = set()    # set of pcal states, can assert we only have one
     rdbe_inp       = inputs() # allow us to loop over all inputs
+    dbes_used      = set()
     
     for IF, ch_list in split_by_if(channels):
         # we could split it up in chunks of 16 channels and route the same IF
@@ -398,8 +417,10 @@ def fqlist_pfb(channels):
 
         # assign those channels to the next available input
         (dbe, inp) = next(rdbe_inp)
+        dbes_used.add( dbe )
         if dbe not in clrs:
             #clrs[dbe].append( "rdbe_person={dbe},pfb".format(dbe=dbe) )
+            clrs[dbe].append( "rdbe_send={dbe},off".format(**locals()) )
             clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=pfbg:pfbg_1_4.bin".format(dbe=dbe) )
             clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
         # count channels per IF
@@ -411,21 +432,23 @@ def fqlist_pfb(channels):
             # Get current pcal state
             pcal_s.add( pcal_state(ch.pcal) )
             # did we set the LO for this (IF,input)?
-            loc    = "lo{0}".format( ch.abcd.lower() )
+            loc    = "lo{ch.canon_if}".format( **locals() )
             if (loc, iif) not in los:
-                los[(loc, iif)]      = "lo="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{pcal}".format(ch=ch, pcal=canon_pcal(ch.pcal))
-                rdbe_los[(loc, iif)] = "rdbe_if="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{dbe},if{iif}".format(ch=ch, dbe=dbe, iif=iif)
+                los[(loc, iif)] = "lo="+loc+",{ch.lo:.2f},{ch.canon_if_sb},{ch.canon_pol}cp,{ch.canon_pcal}".format(**locals())
+                rdbe_los[(loc, iif)] = "rdbe_if="+loc+",{ch.lo:.2f},{ch.canon_if_sb},{ch.canon_pol}cp,{dbe},if{iif}".format(**locals())
             # Append a line describing this channel
-            fqs.append( "rdbef{chan:02d}={dbe},if{iif},{ch.freq:.2f},{ch.bw},{ch.sb},{ch.pol},{ich}".format(
-                        dbe=dbe, chan=ch.bbc, iif=iif, ch=ch, ich=ich) )
+            fqs.append( "rdbef{ch.bbc:02d}={dbe},if{iif},{ch.freq:.2f},{ch.bw},{ch.canon_sb},{ch.canon_pol},{ich}".format(**locals()) )
             # Put it in the ioch mappings
             iochs[ dbe ][ ch.ch_ref ]= (iif, ich)
 
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
+
+    # for all used dbes enable send again
+    enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, dbes_used, list())
     # concatenate all commands - take care of re-ordering the "rdbefXX" commands by XX
     return los.values() + concat(clrs.values())+sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) + \
-           rdbe_los.values() + mk_ioch(iochs.iteritems())
+           rdbe_los.values() + mk_ioch(iochs.iteritems()) + enable_send
 
 # distribute the DDC channels over the RDBE inputs 
 # according to vex2snap.pl
@@ -433,15 +456,18 @@ def fqlist_pfb(channels):
 # otherwise assign ch 0-3 to DBE0, 4-7 to DBE1
 pol_key      = GetA('pol')
 split_by_pol = compose(Map(lambda t: (t[0], list(t[1]))), GroupBy(pol_key), Sorted(key=pol_key))
+
 # given: list of [(pol, [channels]), (pol, [channels])]
-# return:  (dual-pol <bool>, total-nr-channels <int>, each-pol-same-nr-channels <bool>)
-#check_dual_p = compose(Pam(compose(partial(eq, 2), len), sum, all_equal, compose(max, Map(len))), Map(GetN(1)))
+# return:  ( dual-pol <bool>,
+#            total-nr-channels <int>,
+#            each-pol-same-nr-channels <bool>,
+#            max-nr-channels-per-pol <int> )
 check_dual_p = compose(Pam(compose(partial(eq, 2), len), sum, all_equal, max), Map(compose(len, GetN(1))))
 ddc_channels = lambda: (itertools.product( ["dbe0", "dbe1"], range(4) ))
 invert_sb_   = {'l':'u', 'lsb':'usb', 'u':'l', 'usb':'lsb'}
 invert_sb    = compose(choice(invert_sb_.__contains__, invert_sb_.__getitem__, Error("Unknown sideband {0}".format)), str.lower) 
 
-# RDBE setting up DownConverters is tricky, must be first match in the tables
+# RDBE setting up DownConverters is tricky, must use first match in the tables.
 # for upper side band           DDS freq       M  S  [M=Mode S=Sub]
 usb_table    =[ lambda fq, bw:  (fq-512+bw/2,  1, 2) if fq<=(640-bw)   else None
               , lambda fq, bw:  (768-fq-bw/2,  0, 1) if fq<=(768-bw)   else None
@@ -457,114 +483,112 @@ lsb_table    =[ lambda fq, bw:  (1024-fq+bw/2, 1, 0) if fq>=(896+bw)   else None
               , lambda fq, bw:  (768-fq+bw/2,  1, 3) if fq>=(640+bw)   else None
               , lambda fq, bw:  (fq-512-bw/2,  0, 2) if fq>=(512+bw)   else None]
 
+# This function executes the functions in the table selected by sideband and
+# returns the first entry that is not None
 get_dds_cfg = lambda sb, fq, bw: compose(next, partial(itertools.dropwhile, is_none),
                                          Map(lambda f: f(fq, bw)))(usb_table if sb in ['u', 'usb'] else lsb_table)
 
-# input: dict of {<dc#> : <phys inpt>, ... }
-# produce string "<phys inp>:<phy inp>:<phys inp>" sorted by <dc#>
-mk_xbar_ = lambda tbl: "dbe_xbar="+":".join( getitem_(*sorted(tbl.keys()))(tbl) )
+# input: dict of {<dc#> : <phys inp>, ... }
+# produce string "dbe_xbar=<phys inp>:<phys inp>:<phys inp>[:<dummy entries up until DC07 imput>;"
+#  sorted by <dc#>
+mk_xbar_ = lambda tbl: "dbe_xbar="+":".join(map(str, getitem_(*sorted(tbl.keys()))(tbl)))+ ":".join(["2"]*(8-len(tbl)))+";"
 # input: dict of { dbe : dc#-to-phys-input-mapping }
 # output: list of [ "rdbe_cmd=dbe0,3,dbe_xbar=3:3:3:2:2:2:2:2;", ... ]
-#mk_xbar  = compose(Map(lambda item: ""+mk_xbar(item[1], Call('iteritems'))
-mk_xbar  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3".format, GetN(0)), compose(mk_xbar_, GetN(1))))), Call('iteritems'))
+mk_xbar  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3,".format, GetN(0)), compose(mk_xbar_, GetN(1))))),
+                   Call('iteritems'), DD("xbar-cfg"))
+# input:  dict of { <dbe>: [0,2,4,..] } VDIF thread assignments
+# output: [ "rdbe_cmd=<dbe>,3,dbe_vdif_threads_id=0,2,4;", ... ]
+mk_vdif_ = lambda lst: "dbe_vdif_threads_id="+":".join(map(str, lst))+";"
+mk_vdif  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3,".format, GetN(0)), compose(mk_vdif_, GetN(1))))),
+                   Call('iteritems'), DD("vdif-thread-cfg"))
 
 def fqlist_ddc(channels):
     # put all channels of one kind of sideband in one DBE, filter out
     # ones that don't have channels and enumerate the resulting channel lists
     dbes, fqs, dcs = (list(), list(), list())
     los, rdbe_los  = (dict(), dict())
-    clrs           = collections.defaultdict(list)
-    # Keep a mapping of DBE => [CHref => (inp, ch)] in order to be able 
-    # to generate the correct "dbe_ioch_assign" command
-    iochs          = collections.defaultdict(dict)   # map (CHref) => (inp, ch)
+    clrs           = DDict(list)
+    vdif           = DDict(list)
+    # Keep a mapping of channel  => (dbe, ch) in order to be able 
+    # to generate the correct xbar commands and downconverter commands
+    ch_assign      = dict()
     pcal_s         = set()    # set of pcal states, can assert we only have one
     dbes_used      = set()
-    xbar           = collections.defaultdict(dict)
+    xbar           = DDict(dict)
    
     # get list: [ (pol, [channels]), (pol, [channels]), ...]
     chans_by_pol   = split_by_pol(channels)
+
     # for dual pol dual rdbe we require: total nr of channels > 4 and #-right-pol == #-left-pol
     (dual_pol, n_chan_tot, same_nch_pol, max_chan_pol) = check_dual_p( chans_by_pol )
+
+    # some assertions never hurt
     Assert(n_chan_tot<=8, "DDC mode cannot support {0} channels, it is limited to <=8".format(n_chan_tot))
     # this constraint could be different between how flexible IFs can be routed to RDBE inputs
     Assert(max_chan_pol<=4, "DDC mode cannot support {0} channels / polarization, it is limited to <=4".format(max_chan_pol))
 
+    # Assign channels to DBE inputs, based on what we seem to have found
     if dual_pol and same_nch_pol and n_chan_tot>4:
-        # dual pol > 4 channels, assign each pol to one DBE 'r' => 0, 'l' => 1
+        # dual pol > 4 channels, assign each pol to one DBE 'r' => dbe0, 'l' => dbe1
         for pol, ch_list in chans_by_pol:
-            dbe = "dbe0" if pol == 'r' else "dbe1"
-            dbes_used.add( dbe )
+            dbe = "dbe0" if canon_pol(pol) == 'r' else "dbe1"
             # send all channels to this DBE
             for ich, ch in enumerate(ch_list):
-                # convert channel properties to stuff we need
-                ch_frq = int(ch.freq - ch.lo)
-                iif    = if_to_inp(ch.abcd)
-                # Get current pcal state
-                pcal_s.add( pcal_state(ch.pcal) )
-                # did we set the LO for this (IF,input)?
-                loc    = "lo{ch.canon_if}".format( **locals() )
-                if (loc, iif) not in los:
-                    los[(loc, iif)]      = "lo="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{ch.canon_pcal}".format(**locals())
-                    rdbe_los[(loc, iif)] = "rdbe_if="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{dbe},if{iif}".format(**locals())
-                # Append a line describing this channel
-                fqs.append( "rdbef{ch.bbc:02d}={dbe},if{iif},{ch.freq:.2f},{ch.bw},{ch.sb},{ch.pol},{ich}".format(**locals()) )
-                # configure the downconverter
-                #  the decimation
-                decimation, rem = divmod(128, ch.bw)
-                Assert(rem==0, "Channel bandwidth {0} not supported by DDC".format(ch.bw))
-                # check for lower/upper side band
-                sb = copy.deepcopy(ch.sb)
-                if ch_frq<0:
-                    ch_frq = -ch_frq
-                    sb     = invert_sb(sb)
-                # Get the downconverter config
-                (dds_freq, mode, sub) = get_dds_cfg(sb, ch_frq, ch.bw)
-                dcs.append( "rdbe_dc_cfg={dbe},{ich}:{decimation}:{dds_freq:.2f}:{mode};".format(**locals()) )
-                # and the xbar
-                xbar[ dbe ][ ich ] = sub + iif*4
-                
-                # Put it in the ioch mappings
-                #iochs[ dbe ][ ch.ch_ref ]= (iif, ich)
+                ch_assign[ ch ] = (dbe, ich)
     else:
-        # just break up the channels in groups of 4
+        # Distribute the channels over the available DBE's and channels-within-DBE
         available_channels = ddc_channels()
         for ch in channels:
-            (dbe, ich) = next(available_channels)
-            dbes_used.add( dbe )
-            # convert channel properties to stuff we need
-            ch_frq = int(ch.freq - ch.lo)
-            iif    = if_to_inp(ch.abcd)
-            # Get current pcal state
-            pcal_s.add( pcal_state(ch.pcal) )
-            # did we set the LO for this (IF,input)?
-            loc    = "lo{0}".format( ch.abcd.lower() )
-            if (loc, iif) not in los:
-                los[(loc, iif)]      = "lo="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{pcal}".format(ch=ch, pcal=canon_pcal(ch.pcal))
-                rdbe_los[(loc, iif)] = "rdbe_if="+loc+",{ch.lo:.2f},{ch.sb},{ch.pol}cp,{dbe},if{iif}".format(ch=ch, dbe=dbe, iif=iif)
-            # Append a line describing this channel
-            fqs.append( "rdbef{chan:02d}={dbe},if{iif},{ch.freq:.2f},{ch.bw},{ch.sb},{ch.pol},{ich}".format(
-                        dbe=dbe, chan=ch.bbc, iif=iif, ch=ch, ich=ich) )
-            (dds_freq, mode, sub) = get_dds_cfg(sb, ch_frq, ch.bw)
-            dcs.append( "rdbe_dc_cfg={dbe}:{ich}:{decimation}:{fq:.2f}:{mode};".format(dbe=dbe, ich=ich,
-                              decimation=decimation, fq=fq, mode=mode) )
-            # and the xbar
-            xbar[ dbe ][ ich ] = sub + iif*4
-            # Put it in the ioch mappings
-            #iochs[ dbe ][ ch.ch_ref ]= (iif, ich)
+            ch_assign[ ch ] = next(available_channels)
+
+    # Now that we've assigned channels, we can configure the downconverters,
+    # the xbar and the VDIF thread assignment
+    for ch, assign in ch_assign.iteritems():
+        (dbe, ich) = assign
+        dbes_used.add(dbe)
+        # convert channel properties to stuff we need
+        ch_frq     = int(ch.freq - ch.lo)
+        iif        = if_to_inp(ch.abcd)
+        # Get current pcal state
+        pcal_s.add( pcal_state(ch.pcal) )
+        # did we set the LO for this (IF,input)?
+        loc    = "lo{ch.canon_if}".format( **locals() )
+        if (loc, iif) not in los:
+            los[(loc, iif)] = "lo="+loc+",{ch.lo:.2f},{ch.canon_if_sb},{ch.canon_pol}cp,{ch.canon_pcal}".format(**locals())
+            rdbe_los[(loc, iif)] = "rdbe_if="+loc+",{ch.lo:.2f},{ch.canon_if_sb},{ch.canon_pol}cp,{dbe},if{iif}".format(**locals())
+        # configure the downconverter
+        decimation, rem = divmod(128, ch.bw)
+        Assert(rem==0, "Channel bandwidth {0} not supported by DDC".format(ch.bw))
+        # check for lower/upper side band
+        sb = copy.deepcopy(ch.sb)
+        if ch_frq<0:
+            ch_frq = -ch_frq
+            sb     = invert_sb(sb)
+        sb = canon_sb(sb)
+        # Append a line describing this channel
+        # Note: the last digit is the channel and all DDC channels get
+        #       stuffed into IF0. rdbe_tsys.c expects this.
+        fqs.append( "rdbef{ch.bbc:02d}={dbe},if{iif},{ch.freq:.2f},{ch.bw},{sb},{ch.canon_pol},0".format(**locals()) )
+        # Get the downconverter config
+        (dds_freq, mode, sub) = get_dds_cfg(sb, ch_frq, ch.bw)
+        dcs.append( "rdbe_dc_cfg={dbe},{ich}:{decimation}:{dds_freq:.2f}:{mode};".format(**locals()) )
+        # and the xbar
+        xbar[ dbe ][ ich ] = sub + iif*4
+        vdif[ dbe ].append( ch.bbc-1 )
 
     # add commands to load personality and clear
     for dbe in dbes_used:
-        #clrs[dbe].append( "rdbe_person={dbe},ddc,".format(dbe=dbe) )
+        clrs[dbe].append( "rdbe_send={dbe},off".format(**locals()) )
         clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=ddc:ddc_1601583.bin".format(dbe=dbe) )
         clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
 
-    # Construct the crossbar command(s)
-    
+    # for all used dbes enable send again
+    enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, dbes_used, list())
 
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
     return los.values() + concat(clrs.values()) + sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) +\
-           rdbe_los.values() + dcs + mk_ioch(iochs.iteritems())
+           rdbe_los.values() + dcs + mk_xbar(xbar) + mk_vdif(vdif) + enable_send
 
 
 # lookup table
@@ -605,7 +629,7 @@ class Setup(object):
 
 
 class Channel(object):
-    __slots__ = ['bbc', 'abcd', 'pol', 'lo', 'sb', 'pcal', 'bw', 'freq', 'ch_ref']
+    __slots__ = ['bbc', 'abcd', 'pol', 'lo', 'sb', 'if_sb', 'pcal', 'bw', 'freq', 'ch_ref']
 
     def __init__(self, **kwargs):
         reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Channel.__slots__, self)
@@ -617,6 +641,9 @@ class Channel(object):
     def canon_sb(self):
         return canon_sb(self.sb)
     @property
+    def canon_if_sb(self):
+        return canon_sb(self.if_sb)
+    @property
     def canon_if(self):
         return canon_if(self.abcd)
     @property
@@ -626,7 +653,8 @@ class Channel(object):
     def pcal_state(self):
         return pcal_state(self.pcal)
 
-    __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@{0.freq:.2f} [LO={0.lo:.2f}MHz] {0.sb}{0.pol} pcal:{0.pcal}".format)
+    __hash__ = method(GetA('bbc'))
+    __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@{0.freq:.2f} [LO={0.lo:.2f}MHz] {0.sb} {0.pol} pcal:{0.pcal}".format)
 
 
 ####################################################
@@ -668,12 +696,14 @@ def resolve_mode(vexobj):
             (_, ch_freq, sb, bw, ch_ref, bbc_ref, nix) = fqchan
             (bbc_num, if_ref)                     = bbc_lut[ bbc_ref ]
             (ABCD, if_pol, if_lo, if_sb, if_pcal) = if_lut[ if_ref ]
-            nSetup.channels.append( Channel(bbc=int(bbc_num), abcd=ABCD, pol=canon_pol(if_pol), lo=fltMHz(if_lo), ch_ref=ch_ref,
-                                           sb=canon_sb(if_sb), pcal=fltMHz(if_pcal), bw=int(fltMHz(bw)), freq=fltMHz(ch_freq)) )
-                      
+            nSetup.channels.append( D(Channel(bbc=int(bbc_num), abcd=ABCD, pol=if_pol, lo=fltMHz(if_lo), ch_ref=ch_ref,
+                                              sb=sb, if_sb=if_sb, pcal=fltMHz(if_pcal), bw=int(fltMHz(bw)), freq=fltMHz(ch_freq))) )
+
+        # insert new setup into accumulator
         print(nSetup.procedure)
-        #
+        return setitem_(modename, nSetup)(acc)
     return do_resolve
+
 
 #############################################################
 #        do the work of processing the vex file
@@ -690,30 +720,31 @@ def process_vex(vexfile):
         # we need to retain the order of the scans (if we created a dict { "scanLabel":<scanObject> }
         # we could loose the order of scan label. There is no guarantee scan labels contain any useful information.
         #scans = filter(station_scan(userinput.station), vexf['SCHED'].iteritems())
-        scans = get_station_scans(userinput.station)( vexf )
+        scans  = get_station_scans(userinput.station)( vexf )
 
         Assert(scans, "The station '{0}' does not observe any of the scans".format(userinput.station))
 
-        # collect all mode names - they need to be converted into setups
-        modes = compose(set, Map(GetA('mode')))(scans)
-        #modes = reduce(lambda acc, scan: acc.add(scan_mode(scan)) or acc, scans, set())
+        # collect all mode names - they need to be converted into numbered setups
+        modes  = compose(partial(refs_for_station, userinput.station), Map(enumerate_setups), Map(get_mode(vexf)),
+                         Call('iterkeys'), GetN('MODE'))(vexf)
 
         # Convert to a dict of {"mode", ("setupXX", {'BBC': <BBC-defname>, 'IF': <IF-defname>, ..}), ... }
         # with the defnames applicable to the desired names
-        modes = compose(partial(refs_for_station, userinput.station), Map(enumerate_setups), Map(get_mode(vexf)))(modes)
-
+        #modes  = compose(partial(refs_for_station, userinput.station), Map(enumerate_setups), Map(get_mode(vexf)))(modes)
         setups = reduce(resolve_mode(vexf), modes.iteritems(), {})
 
         procedure = Procedure("sched_")
         procedure.append('" BP229B EB_RDBE2 Eb')
 
         print("Scans: ", Map(GetA('label'))(scans))
+        print("Setups:", setups)
         print("Modes: ", modes)
+        print("Recorder:", userinput.recorder)
         print("Procedures:")
         print(procedure)
     return None
 
 # main loop: iterate over all command line arguments
-main = compose(process_vex, MSG("Start processing"))
+main = Map(compose(process_vex, MSG("Start processing")))
 
-map(main, userinput.vexfile)
+main(userinput.vexfile)
