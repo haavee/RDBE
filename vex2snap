@@ -13,6 +13,13 @@
 #            --station          Two-letter station code to generate .prc/.snp for
 #            --dest             set destination path for output files
 #                               [default: /usr2/sched]
+#            --recorder TYPE[:DISKS]
+#                               TYPE  = Mark5C | Mark6
+#                               DISKS = (only if TYPE=Mark6)
+#                                       argument to "set_disks=", specify on which  
+#                                       disks or module to record the experiment
+#                                       [default for Mark6: "mark6" -
+#                                        i.e. all presently mounted disks]
 #            --force            overwrite output files [default: don't!]
 #            --ignore-utc       do not forget scans from the past
 #                               [default: only process scheduled scans
@@ -158,15 +165,119 @@ vextime2sec = compose(yhms2sec, Call('groups'), re.compile(r"^\d+y(\d+)d(\d+)h(\
                       partial(re.sub, r"[ \t\n]*", r""))
 utcsec_now  = utsec_year( datetime.datetime.utcnow() )
 
+
+####################################################
+#  A snap procedure
+####################################################
+mk_lines = compose(Filter(truth), Map(str.strip), Call('split', '\n'))
+lineify  = choice(partial(reorder_args(isinstance, 1, 0), list), identity, mk_lines)
+
+class Procedure(object):
+    _defaults = { 'initial_newline': '\n' }
+    def __init__(self, name, init_list=None, **kwargs):
+        # at most 12 characters in procedure name
+        Assert(len(name)<=12, "SNAP procedure name '{0}' is longer than 12 characters".format(name))
+        # initialize defaults which could be overriden through kwargs
+        reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, Procedure._defaults.get(attr, None))) or acc,
+               Procedure._defaults.keys(), self)
+        self.name    = name
+        self.lines   = copy.deepcopy(lineify(init_list) if init_list is not None else list())
+
+    def append(self, line):
+        self.lines.extend(lineify(line))
+        return self
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __str__(self):
+        return "{0}define  {1: <12s} 00000000000x\n".format(self.initial_newline, self.name) + "\n".join(self.lines)+"\nenddef"
+
 ###################################################
 #       Supported recorders
 ###################################################
 
-class Mark5C(object):
+# break string at '\n', strip leading/trailing whitespace, filter out non-empty ones and prepend each one with something
+prefix  = lambda pfx: compose(Map(partial(add, pfx)), Filter(truth), Map(str.strip), Call('split', '\n'))
+mk5     = prefix("mk5=")
+comment = prefix('"')
+rdbe_cmd= prefix("rdbe_cmd=")
+
+class Recorder(object):
+    def procedures(self):
+        # it'll be jive5ab so we can issue these commands just fine
+        return [Procedure("sched_initi", mk5("os_rev?\nversion?"))]
+
+
+class Mark5C(Recorder):
     __repr__ = method(const("Mark5C"))
 
-class Mark6(object):
+    def __init__(self):
+        self.procedure_lst = [Procedure("sched_initi", mk5("ss_rev?"))]
+
+    def procedures(self):
+        # mark5c - add firmware version
+        return Recorder.procedures(self) + self.procedure_lst
+
+    # depending on Setup's props, generate the appropriate commands to add to
+    # one or more procedures
+    def setup_procedures(self, setup):
+        Assert(setup.firmware in ["PFB", "DDC4", "DDC8"],
+               "The setup's firmware {0} is not supported by the recorder".format(setup.firmware))
+        # we need to append to the setup's procedure at the very least
+        setup_p = Procedure(setup.setup)
+        if setup.firmware == "PFB":
+            # pfb outputs Mark5B as 2x5008 byte frames w/ broken sequence number
+            # (32 bits in 64 bit word and at the wrong half at that)
+            setup_p.append( mk5("packet=36:0:5008:0:0;") )
+            # need to generate the mode=
+            setup_p.append( mk5("mode=MARK5B-{0.datarate}-{0.nChannel}-2".format(setup)) )
+        else:
+            # DDC mode outputs VDIF
+            setup_p.append( mk5("packet=36:0:8224:0:0;") )
+            setup_p.append( mk5("mode=VDIF_8224-{0.datarate}-{0.nChannel}-2".format(setup)) )
+        return [setup_p]
+
+
+
+class Mark6(Recorder):
     __repr__ = method(const("Mark6"))
+
+    def __init__(self, disks=None):
+        initi = Procedure("sched_initi")
+        # flexbuff/mark6 recording RDBE must be done on port 625 apparently
+        # net_protocol pudp/udps will be set depending on setup
+        # but buffer sizes &cet can already be set
+        initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
+                              will be set in the setup, it is firmware dependent""") )
+        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:256M:4") )
+        initi.append( mk5("set_disks={0}".format("mark6" if disks is None else disks)) )
+        self.procedure_lst = [initi]
+
+    def procedures(self):
+        return Recorder.procedures(self) + self.procedure_lst
+
+    # depending on Setup's props, generate the appropriate commands to add to
+    # one or more procedures
+    def setup_procedures(self, setup):
+        Assert(setup.firmware in ["PFB", "DDC4", "DDC8"],
+               "The setup's firmware {0} is not supported by the recorder".format(setup.firmware))
+        # we need to append to the setup's procedure at the very least
+        setup_p = Procedure(setup.setup)
+        if setup.firmware == "PFB":
+            # pfb outputs Mark5B as 2x5008 byte frames w/ broken sequence number
+            # (32 bits in 64 bit word and at the wrong half at that)
+            # There is a compile-time option in jive5ab to decode these sequence numbers
+            # (FILA=1) but then we need to swap executables ....
+            # Maybe I'll add an "udps32" net_protocol to support this format dynamically
+            setup_p.append( mk5("net_protocol=udpsnor\nmtu=5100") )
+            # need to generate the mode=
+            setup_p.append( mk5("mode=MARK5B-{0.datarate}-{0.nChannel}-2".format(setup)) )
+        else:
+            # DDC mode outputs 8224 byte VDIF w/o sequence number?
+            setup_p.append( mk5("net_protocol=pudp\nmtu=9000") )
+            setup_p.append( mk5("mode=VDIF_8224-{0.datarate}-{0.nChannel}-2".format(setup)) )
+        return [setup_p]
 
 #############################################################################
 #
@@ -190,8 +301,11 @@ class PrintUsage(argparse.Action):
 
 # an action which (attempts to) map a recorder type string into an actual type
 recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6}
-recorder_type     = compose(apply, choice(recorder_mapping.__contains__, recorder_mapping.__getitem__,
+get_recorder_type = compose(choice(recorder_mapping.__contains__, recorder_mapping.__getitem__,
                             Error("Unknown recorder type {0}".format)), str.lower)
+def recorder_type(rec):
+    rec = rec.split(':')
+    return get_recorder_type(rec[0])(*rec[1:])
 
 
 parsert = argparse.ArgumentParser(description="Transform VEX files to .snp/.prc", add_help=False)
@@ -324,6 +438,25 @@ def station_scan(station):
 end_in_future     = compose(partial(lt, userinput.utc_limit), GetA('end'))
 get_station_scans = lambda station: compose(Filter(end_in_future), Filter(truth), Map(station_scan(station)), Call('iteritems'), GetN('SCHED'))
 
+
+# Build dict { SOURCE-def: Source(), ... }
+class Source(object):
+    __slots__ = ['source_name', 'ra', 'dec', 'ref_coord_frame']
+
+    # initialize from keywordargs
+    def __init__(self, **kwargs):
+        reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Source.__slots__, self)
+
+    __str__  = method("{0.source_name}@RA/DEC={0.ra}/{0.dec} {0.ref_coord_frame}".format)
+    __repr__ = __str__
+
+def mk_source(vexobj):
+    return reduce(lambda acc, a: setattr(acc, a, vexobj[a]) or acc, Source.__slots__, Source())
+
+# given vexfile, extract all $SOURCE; entries and return { SOURCE-def: Source(), ... }
+source_lut = compose(dict, Map(Pam(GetN(0), compose(mk_source, GetN(1)))), Call('iteritems'), GetN('SOURCE'))
+
+
 # From a MODE extract the IF, FREQ, BBC, TRACKS, PHASE_CAL_DETECT for the requested station.
 # In the VEX file these are ref lines so format is:
 #   ref $REF = <defname> : station : station : ... ;
@@ -398,7 +531,7 @@ concat     = Reduce(add)          # input: iterable-of-lists, output one list
 def mk_ioch_(acc, item):
     # item = (dbe, <dict>)
     dbe, ch_dict = item
-    cmd = "rdbe_cmd="+dbe+",5,dbe_ioch_assign=";
+    cmd = "rdbe_cmd="+dbe+",5,dbe_ioch_assign="
     # loop over the channels in vex order because that's
     # how they need to be written?
     for ch in sorted(ch_dict.iterkeys(), key=int_key("^CH(\d+)")):
@@ -410,8 +543,13 @@ mk_ioch = lambda l: reduce(mk_ioch_, l, list())
 # input:  setup.dbes_used, which is: set( (<dbe>, <input>), ... )
 # output: set of unique <dbe>'s 
 get_dbes     = compose(set, Map(GetN(0)))
+# From a dict {"mode":Setup(), ...}, extract ".dbes_used" (see above)
+# transform that entry (identity, GetN(0) (==DBE), GetN(1) (==Input), ...)
+# and uniquefy that over all setups
+get_all_dbes_ = lambda xform: compose(Reduce(set.union), Map(compose(set, Map(xform), GetA('dbes_used'))), Call('itervalues'))
 # From a dict {"mode":Setup(), ...}, extract the set of all dbe's used over all setups
-get_all_dbes = compose(Reduce(set.union), Map(compose(get_dbes, GetA('dbes_used'))), Call('itervalues'))
+get_all_dbes   = get_all_dbes_(GetN(0)) #compose(Reduce(set.union), Map(compose(get_dbes, GetA('dbes_used'))), Call('itervalues'))
+get_all_inputs = get_all_dbes_(identity)
 
 ###############################################################################
 #
@@ -648,6 +786,12 @@ class Setup(object):
         # generate the procedure text
         return [Procedure(self.setup, make_fqlist(self.firmware)(self))]
 
+    @property
+    def nChannel(self):
+        if self.channels is None:
+            raise RuntimeError("No channels defained for setup {0}".format(self.setup))
+        return len(self.channels)
+
 
 class Channel(object):
     __slots__ = ['bbc', 'abcd', 'pol', 'lo', 'sb', 'if_sb', 'pcal', 'bw', 'freq', 'ch_ref']
@@ -677,32 +821,6 @@ class Channel(object):
     __hash__ = method(GetA('bbc'))
     __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@{0.freq:.2f} [LO={0.lo:.2f}MHz] {0.sb} {0.pol} pcal:{0.pcal}".format)
 
-
-####################################################
-#  A snap procedure
-####################################################
-lineify = choice(reorder_args(isinstance, [1,0], list), identity, mk_lines)
-
-class Procedure(object):
-    _defaults = { 'initial_newline': '\n' }
-    def __init__(self, name, init_list=None, **kwargs):
-        # at most 12 characters in procedure name
-        Assert(len(name)<=12, "SNAP procedure name '{0}' is longer than 12 characters".format(name))
-        # initialize defaults which could be overriden through kwargs
-        reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, Procedure._defaults.get(attr, None))) or acc,
-               Procedure._defaults.keys(), self)
-        self.name    = name
-        self.lines   = copy.deepcopy(init_list if init_list is not None else list())
-
-    def append(self, line):
-        self.lines.extend(lineify(line))
-        return self
-
-    def __hash__(self):
-        return hash(self.name)
-
-    def __str__(self):
-        return "{0}define  {1: <12s} 00000000000x\n".format(self.initial_newline, self.name) + "\n".join(self.lines)+"\nenddef"
 
 # input: - ("mode", ("setupXX", { 'BBC': "BBC-def", 'IF': "IF-def", ... ) 
 #        - vex object
@@ -737,7 +855,6 @@ def resolve_mode(vexobj):
 
 # basic procedures
 get_EXPER = compose(str.upper, GetN('exper_name'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
-mk_lines  = compose(Filter(truth), Map(str.strip), Call('split', '\n'))
 
 def proc_library(vexfile, userinp):
     return Procedure("proc_library", mk_lines(
@@ -817,24 +934,54 @@ def process_vex(vexfile):
         #   So: extract all Setup() objects and sort by name
         procedures = reduce(process_setup, ordered_setups(setups), procedures)
 
-        # Now that all setups (and thus modes) have been generated,
-        # we can extract the set of all dbe's ever used in all setups
-        # so we can properly add initialization commands
-        #for cmds in []:
-        #    procedures
-        for dbe in get_all_dbes( setups ):
-            procedures["sched_initi"].append( "rdbe_command={dbe},3,dbe_data_send=on;\nrdbe_time={dbe},3".format(**locals()) )
-
-        procedures["sched_initi"].append( "!+1s\ngetgps\n!+1s\nready_disk" )
-
         # todo: 
         # procedure collect - tsys
         #           start   - initiate collect every 10s
         #           preob   - ifread/dbe_quanttize_hold_set
-        #           setupN  - recorder config?  
+        collect, start, preob = map(Procedure, ["collect", "start", "preob"])
 
+        procedures[preob]   = preob
+        procedures[start]   = start
+        procedures[collect] = collect
+
+        # Now that all setups (and thus modes) have been generated,
+        procedures[preob].append( "ifread" )
+        procedures[start].append( "collect@!,10s" )
+
+        # we can extract the set of all dbe's ever used in all setups
+        # so we can properly add initialization commands for all used dbe's to
+        # the appropriate procedures
+        for dbe in get_all_dbes(setups):
+            for p, lst in [(preob, ["rdbe_cmd={dbe},3,dbe_quantize=hold_set;".format]),
+                    ("sched_initi", ["rdbe_cmd={dbe},3,dbe_data_send=on;".format,
+                                     "rdbe_time={dbe},3".format, 
+                                     "rdbe_cmd={dbe},3,dbe_dot?;".format])]:
+                for cmd in lst:
+                    procedures[p].append( cmd(**locals()) )
+
+        procedures["sched_initi"].append( "!+1s\ngetgps\n!+1s\nready_disk" )
+        procedures[preob].append( "op_stream=start" )
+
+        # tsys is collected per RDBE input
+        for dbe_inp in get_all_inputs(setups):
+            collect.append( "rdbe_tsys={dbe_inp[0]},{dbe_inp[1]}".format(**locals()) )
+
+        # If there is a recorder defined, it will be jive5ab so let's ask it for its version &cet
+        for p in [] if userinput.recorder is None else userinput.recorder.procedures():
+            procedures[p].append( p.lines )
+
+        # Now need to go over all setups and configure the recorder "mode=" and "net_protocol="
+        #           setupN  - recorder config? 
+        if False:#userinput.recorder is not None:
+            for setup in setups.values():
+                for p in userinput.recorder.setup_procedures(setup):
+                    procedures[p].append( p.lines )
+
+        # read /usr2/control/rdbead.ctl for rdbe address and tsys/1pps monitoring
 
         # produce .snp file with all scans in
+        sources = source_lut(vexf)
+        print("Sources:",sources)
 
         #print("Scans: ", Map(GetA('label'))(scans))
         #print("Setups:", setups)
