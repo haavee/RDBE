@@ -65,12 +65,11 @@ between     = lambda a, b   : (lambda x: a<=x<b)                  # missing from
 # our getitem_ always returns a tuple of value(s)
 #   for laughs, look up 'operator.itemgetter()' => 3 (three!)
 #   different types of return type depending on arguments! FFS!
-getitem_    = lambda *n     : (lambda x: tuple(GetN(*n)(x)))#(lambda x: map(x.__getitem__, n)) #compose(tuple, partial(reorder_args(getitem, 1, 0), n))
+getitem_    = lambda *n     : (lambda x: tuple(map(x.__getitem__, n)))
 setitem_    = lambda n, v   : combine(logic_or, partial(reorder_args(setitem, 2, 0, 1), n, v), identity)
 # reorder_args: call f with the arguments indicated by idx:
 # call f with args[idx[n]] for 0 <= n < len(idx)
 # f will be called with len(idx) arguments. can also be used to select/repeat arguments
-#reorder_args= lambda f, *idx: (lambda *args, **kwargs: f(*m_itemgetter(*idx)(args), **kwargs))
 reorder_args= lambda f, *idx: (lambda *args, **kwargs: f(*getitem_(*idx)(args), **kwargs))
 hasattr_    = lambda a      : partial(reorder_args(hasattr, 1, 0), a)
 getattr_    = lambda a      : partial(reorder_args(getattr, 1, 0), a)
@@ -156,15 +155,23 @@ class OrderedDefaultDict(collections.OrderedDict):
 #       Some time-related functionality
 ###################################################
 
-# convert any sequence of (doy, hh, mm, ss) into seconds-within-year
-yhms2sec    = compose(sum, StarMap(mul), Zip([86400, 3600, 60, 1]), Map(int))
+# convert any sequence of (y, doy, hh, mm, ss) into seconds-within-year
+yhms2sec    = compose(sum, StarMap(mul), Zip([0, 86400, 3600, 60, 1]), Map(int))
 # extract those values from an utctimetuple()
 utsec_year  = compose(yhms2sec, GetA('tm_yday', 'tm_hour', 'tm_min', 'tm_sec'), Call('utctimetuple'))
 # extract them from a VEX time stamp 
-vextime2sec = compose(yhms2sec, Call('groups'), re.compile(r"^\d+y(\d+)d(\d+)h(\d+)m(\d+)s$").match,
-                      partial(re.sub, r"[ \t\n]*", r""))
+rxVEXtime    = re.compile(r"^(?P<y>\d+)y(?P<d>\d+)d(?P<h>\d+)h(?P<m>\d+)m(?P<s>\d+)s$")
+vextime2sec = compose(yhms2sec, Call('groups'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
 utcsec_now  = utsec_year( datetime.datetime.utcnow() )
 
+class VEXTime(object):
+    __slots__ = ['y', 'd', 'h', 'm', 's']
+
+    # assume we're constructed from a matchresult from matching rxVEXtime
+    def __init__(self, matchdict):
+        reduce(lambda acc, attr: setattr(acc, attr, matchdict.pop(attr, None)) or acc, VEXTime.__slots__, self)
+        
+mk_vextime  = compose(VEXTime, Call('groupdict'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
 
 ####################################################
 #  A snap procedure
@@ -207,6 +214,14 @@ class Recorder(object):
     def procedures(self):
         # it'll be jive5ab so we can issue these commands just fine
         return [Procedure("sched_initi", mk5("os_rev?\nversion?"))]
+
+class RecorderNone(Recorder):
+    __repr__ = method(const("None"))
+
+    def procedures(self):
+        return list()
+    def setup_procedures(self, setup):
+        return list()
 
 
 class Mark5C(Recorder):
@@ -300,7 +315,7 @@ class PrintUsage(argparse.Action):
         sys.exit( usage() )
 
 # an action which (attempts to) map a recorder type string into an actual type
-recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6}
+recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6, 'none':RecorderNone}
 get_recorder_type = compose(choice(recorder_mapping.__contains__, recorder_mapping.__getitem__,
                             Error("Unknown recorder type {0}".format)), str.lower)
 def recorder_type(rec):
@@ -333,11 +348,24 @@ userinput = parsert.parse_args()
 
 # Take some actions based on what the user gave us (debug e.g.)
 if userinput.debug:
-    D  = MSG("DEBUG")
-    DD = lambda y: MSG(y)
+    D     = MSG("DEBUG")
+    DD    = lambda y: MSG(y)
+    level = 0
+    def Trace(f, pfx=None):
+        fmt = ("{0} {1}" if pfx is None else pfx+": {0} {1}").format
+        def call(*args, **kwargs):
+            global level
+            print("TRACE:","  "*level,fmt(args, kwargs))
+            level += 1
+            rv = f(*args, **kwargs)
+            print("      ","  "*level,"  ==>",rv)
+            level -= 1
+            return rv
+        return call
 else:
-    D  = identity
-    DD = const(identity)
+    D     = identity
+    DD    = const(identity)
+    Trace = lambda f, *args, **kwargs: f
     def silent_except_hook(tp, val, tb):
         print(str(val))
     sys.excepthook = silent_except_hook
@@ -439,16 +467,44 @@ end_in_future     = compose(partial(lt, userinput.utc_limit), GetA('end'))
 get_station_scans = lambda station: compose(Filter(end_in_future), Filter(truth), Map(station_scan(station)), Call('iteritems'), GetN('SCHED'))
 
 
+#ra = 00h41m41.2986000s; dec =  -41d03'32.995800"; ref_coord_frame = J2000;
+radec2snap = choice(is_none, Error("Attempt to convert an RA/DEC of None to SNAP"),
+                    compose(choice(re.compile(r"^\d+h\d+m\d+(\.\d*)?s|-?\d+d\d+'\d+(\.\d*)?\"$").match,
+                                   partial(re.sub, "hmsd'\"", ""),
+                                   Error("The coordinate {0} does not conform to format for RA or DEC".format)),
+                            str.strip, str.lower))
+
+ref2snap = choice(is_none, Error("Attempt to convert an RA/DEC of None to SNAP"),
+                  choice(compose(partial(eq, "J2000"), str.upper, str.strip),
+                         const("2000"), Error("The coordinate reference frame {0} is not J2000".format)))
+
 # Build dict { SOURCE-def: Source(), ... }
 class Source(object):
     __slots__ = ['source_name', 'ra', 'dec', 'ref_coord_frame']
+    #__xform__ = {'ra':str2ra, 'dec':str2dec}
 
     # initialize from keywordargs
     def __init__(self, **kwargs):
         reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Source.__slots__, self)
+        #reduce(lambda acc, attr: setattr(acc, Source.__xform__.get(attr, identity)(attr), kwargs.pop(attr, None)) or acc,
+        #       Source.__slots__, self)
+
+    # ra,dec in snap format are basically stuff from the vex file with hms
+    # and d'" removed?
+    @property
+    def ra_snap(self):
+        return radec2snap(self.ra)
+    @property
+    def dec_snap(self):
+        return radec2snap(self.dec)
+    @property
+    def ref_coord_frame_snap(self):
+        return ref2snap(self.ref_coord_frame)
+
 
     __str__  = method("{0.source_name}@RA/DEC={0.ra}/{0.dec} {0.ref_coord_frame}".format)
     __repr__ = __str__
+
 
 def mk_source(vexobj):
     return reduce(lambda acc, a: setattr(acc, a, vexobj[a]) or acc, Source.__slots__, Source())
@@ -456,6 +512,44 @@ def mk_source(vexobj):
 # given vexfile, extract all $SOURCE; entries and return { SOURCE-def: Source(), ... }
 source_lut = compose(dict, Map(Pam(GetN(0), compose(mk_source, GetN(1)))), Call('iteritems'), GetN('SOURCE'))
 
+
+class Site(object):
+    __slots__ = ['site_name', 'site_position']
+    __xform__ = {'site_position': Map(compose(float, str.strip, partial(re.sub, "m", "")))}
+
+    def __init__(self, vexobj):
+        reduce(lambda acc, attr: setattr(acc, attr, Site.__xform__.get(attr, identity)(vexobj[attr])) or acc, Site.__slots__, self)
+
+    __str__  = method("site {0.site_name} @{0.site_position}".format)
+
+    @property
+    def site_position_snap(self):
+        return " ".join(map(str, self.site_position))
+
+class DAS(object):
+    __slots__ = ['record_transport_type', 'electronics_rack_type']
+    __xform__ = {'record_transport_type': recorder_type}
+
+    def __init__(self, vexobj):
+        reduce(lambda acc, attr: setattr(acc, attr, DAS.__xform__.get(attr, identity)(vexobj[attr])) or acc, DAS.__slots__, self)
+
+    __str__  = method("Rack {0.electronics_rack_type} Recorder {0.record_transport_type}".format)
+
+# resolve a station into SITE and DAS (ANTENNA not currently necessary)
+class Station(object):
+    __slots__ = ['site', 'das']
+    __xform__ = {'site':Site, 'das':DAS }
+
+    def __init__(self, **kwargs):
+        reduce(lambda acc, a: setattr(acc, a, Station.__xform__.get(a, identity)(kwargs.pop(a, None))) or acc, Station.__slots__, self)
+
+    __str__   = method("Station: {0.site} {0.das}".format)
+
+station_defs = lambda station: compose(Pam(*map(GetN, ['SITE', 'DAS'])), GetN(station), GetN('STATION'))
+
+def mk_station(vexfile, station):
+    (site_def, das_def) = station_defs(station)(vexfile)
+    return Station(site=vexfile['SITE'][site_def], das=vexfile['DAS'][das_def])
 
 # From a MODE extract the IF, FREQ, BBC, TRACKS, PHASE_CAL_DETECT for the requested station.
 # In the VEX file these are ref lines so format is:
@@ -854,16 +948,21 @@ def resolve_mode(vexobj):
 
 
 # basic procedures
-get_EXPER = compose(str.upper, GetN('exper_name'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
+
+EXPER        = compose(str.upper, GetN('exper_name'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
+NominalStart = compose(mk_vextime, GetN('exper_nominal_start'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
 
 def proc_library(vexfile, userinp):
+    # extract station/site info for the given station
+    station = mk_station(vexfile, userinp.station)
     return Procedure("proc_library", mk_lines(
-    """ " {exper} {STATION}_RDBE {station}\n
-     " vex2snap/Python version 2019 by Harro Verkouter, JIVE\n
+    """ " {exper} {SITE} {station}\n
+     " vex2snap/Python version {version} by Harro Verkouter, JIVE\n
      " based on vex2snap version 2014_nov_06 by DG and UB, MPIfR\n
-     "< RDBE  rack><{recorder: <10s}recorder 1>< None    recorder 2>""".format(
-             exper=get_EXPER(vexfile), station=userinput.station, STATION=userinput.station.upper(),
-             recorder = str(userinput.recorder))), initial_newline="")
+     "< {RACK}  rack>< {recorder: <10s}recorder 1>< None    recorder 2>""".format(
+             exper=EXPER(vexfile), station=userinput.station,
+             SITE=station.site.site_name, RACK=station.das.electronics_rack_type,
+             recorder=str(userinput.recorder or station.das.record_transport_type), **globals())), initial_newline="")
 
 def exper_init(vexfile, userinp):
     return Procedure("exper_initi", mk_lines("proc_library\nsched_initi\n"))
@@ -876,6 +975,20 @@ standard_procedures = Pam(proc_library, exper_init, sched_init)
 def process_setup(acc, setup):
     return reduce(lambda a, p: (a[p].append(p.lines) or a) if p in a else setitem_(p, p)(a), setup.procedures, acc)
 
+def snap_header(vexfile, userinp):
+    # extract station/site info for the given station
+    station   = mk_station(vexfile, userinp.station)
+    # extract experiment nominal start
+    nom_start = NominalStart(vexfile)
+    return comment("""
+    {exper} {nom_start.y} {SITE} H {userinp.station}\n
+    H {SITE} AZEL sss  s s s s s s s  {userinp.station}\n
+    {userinp.station} {SITE} {station.site.site_position_snap}\n
+    vex2snap/Python version {version} by Harro Verkouter, JIVE\n
+      based on vex2snap version 2014_nov_06 by DG and UB, MPIfR\n
+    Rack={station.das.electronics_rack_type}  Recorder 1={recorder}  Recorder 2=none""".format(version=version,
+             exper=EXPER(vexfile), SITE=station.site.site_name,
+             recorder = str(userinput.recorder or station.das.record_transport_type), **locals()))
 
 # ordered dict with a tiny twist -
 # the key will always be hash(key) such that 
@@ -900,8 +1013,11 @@ ordered_setups = compose(Sorted(key=compose(int_key("^setup(\d+)"), GetA('setup'
 #############################################################
 def process_vex(vexfile):
     with OpenVex(vexfile) as vexf:
+        # extract station information
+        station = mk_station(vexf, userinput.station)
+
         # Generate the output file names: destination/<exper><station>.{prc, snp, lst}
-        files = output_files(vexf, userinput.station)
+        files   = output_files(vexf, userinput.station)
         # check if they exist and if so if ok to overwrite
         ok_to_write(files)
 
@@ -967,21 +1083,24 @@ def process_vex(vexfile):
             collect.append( "rdbe_tsys={dbe_inp[0]},{dbe_inp[1]}".format(**locals()) )
 
         # If there is a recorder defined, it will be jive5ab so let's ask it for its version &cet
-        for p in [] if userinput.recorder is None else userinput.recorder.procedures():
+        #for p in [] if userinput.recorder is None else userinput.recorder.procedures():
+        recorder = (userinput.recorder or station.das.record_transport_type)
+        for p in [] if recorder is None else recorder.procedures():
             procedures[p].append( p.lines )
 
         # Now need to go over all setups and configure the recorder "mode=" and "net_protocol="
         #           setupN  - recorder config? 
-        if False:#userinput.recorder is not None:
-            for setup in setups.values():
-                for p in userinput.recorder.setup_procedures(setup):
-                    procedures[p].append( p.lines )
+        for setup in setups.values():
+            for p in recorder.setup_procedures(setup):
+                procedures[p].append( p.lines )
 
         # read /usr2/control/rdbead.ctl for rdbe address and tsys/1pps monitoring
 
         # produce .snp file with all scans in
+        # get the .snp header
+
         sources = source_lut(vexf)
-        print("Sources:",sources)
+
 
         #print("Scans: ", Map(GetA('label'))(scans))
         #print("Setups:", setups)
@@ -990,6 +1109,9 @@ def process_vex(vexfile):
         print("Procedures:")
         for p in procedures.values():
             sys.stdout.write(str(p))
+
+        print(snap_header(vexf, userinput))
+        print(mk_station(vexf, userinput.station))
     return None
 
 # main loop: iterate over all command line arguments
