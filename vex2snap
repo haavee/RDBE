@@ -43,7 +43,7 @@
 #  
 #
 from __future__ import print_function
-import re, os, sys, copy, argparse, itertools, datetime, collections
+import re, os, sys, copy, time, argparse, itertools, datetime, collections
 from functools import reduce, partial
 from operator import *
 from vex.vex import Vex
@@ -94,6 +94,7 @@ all_equal   = compose(lambda g: next(g, True) and not next(g, False), itertools.
 #is_iterable = combine(logic_or, hasattr_('__iter__'), hasattr_('__getitem__'))
 #listify     = choice(is_iterable, identity, lambda x: [x])
 is_none     = partial(is_, None)
+if_not_none = lambda f, d=None: choice(is_none, const(d), f)
 GetN        = itemgetter
 GetA        = attrgetter
 Call        = methodcaller
@@ -158,26 +159,51 @@ class OrderedDefaultDict(collections.OrderedDict):
 ###################################################
 
 # convert any sequence of (y, doy, hh, mm, ss) into seconds-within-year
-yhms2sec    = compose(sum, StarMap(mul), Zip([0, 86400, 3600, 60, 1]), Map(int))
+yhms2sec    = compose(sum, StarMap(mul), Zip([86400*356, 86400, 3600, 60, 1]), Map(int))
 # extract those values from an utctimetuple()
 utsec_year  = compose(yhms2sec, GetA('tm_year', 'tm_yday', 'tm_hour', 'tm_min', 'tm_sec'), Call('utctimetuple'))
 # extract them from a VEX time stamp 
-rxVEXtime    = re.compile(r"^(?P<y>\d+)y(?P<d>\d+)d(?P<h>\d+)h(?P<m>\d+)m(?P<s>\d+)s$")
+rxVEXtime   = re.compile(r"(?P<y>\d+)y(?P<d>\d+)d(?P<h>\d+)h(?P<m>\d+)m(?P<s>\d+)s$")
 vextime2sec = compose(yhms2sec, Call('groups'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
 utcsec_now  = utsec_year( datetime.datetime.utcnow() )
 
 class VEXTime(object):
-    __slots__ = ['y', 'd', 'h', 'm', 's']
-    __xform__ = {'y':int, 'd':int, 'h':int, 'm':int, 's':float}
-    # assume we're constructed from a matchresult from matching rxVEXtime
-    def __init__(self, matchdict):
-        reduce(lambda acc, attr: setattr(acc, attr, VEXTime.__xform__.get(attr, identity)(matchdict.pop(attr, None))) or acc,
-               VEXTime.__slots__, self)
+    __slots__  = ['y', 'd', 'h', 'm', 's', 'sign']
+    _xform_    = {'y':if_not_none(int, 0), 'd':if_not_none(int, 0), 'h':if_not_none(int,0),
+                  'm':if_not_none(int, 0), 's':if_not_none(float,0.0), 'sign':choice(partial(eq, "-"), const(-1), const(1))}
+    # fields to convert from time.time_tuple into our own
+    _ttcnv_    = {'tm_year':'y', 'tm_yday':'d', 'tm_hour':'h', 'tm_min':'m', 'tm_sec':'s', 'non_existent':'sign'} 
+    _tuple_    = GetA('y', 'd', 'h', 'm', 's')
+    _sign_     = {None:"", 1:"+", -1:"-"}
 
-        __repr__ = method("{0.y:04d}y{0.d:02d}d{0.h:02d}h{0.m:02d}m{0.s:6.3f}".format)
+    # assume we're constructed from a matchresult from matching rxVEXtime or from an utc_timetuple
+    def __init__(self, m):
+        if isinstance(m, time.struct_time):
+            reduce(lambda a, i: setattr(a, i[1], VEXTime._xform_.get(i[1], identity)
+                                        (getattr(m, i[0]) if hasattr(m, i[0]) else None)) or a,
+                   VEXTime._ttcnv_.iteritems(), self)
+        else:
+            reduce(lambda a, k: setattr(a, k, VEXTime._xform_.get(k, identity)(m.get(k, None))) or a,
+                   VEXTime._xform_.iterkeys(), self)
+
+    @property
+    def seconds(self):
+        return self.sign * yhms2sec( self.tuple )
+
+    @property
+    def tuple(self):
+        return VEXTime._tuple_(self)
+
+    # fstime is year.doy.hh:mm:ss
+    @property
+    def as_fstime(self):
+        return "{0.y}.{0.d}.{0.h}:{0.m}:{0.s}".format(self)
+
+    def __repr__(self):
+        return "{1}{0.y:04d}y{0.d:02d}d{0.h:02d}h{0.m:02d}m{0.s:06.3f}s".format(self, VEXTime._sign_[self.sign])
+
         
 mk_vextime  = compose(VEXTime, Call('groupdict'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
-
 
 ####################################################
 #  A snap procedure
@@ -328,6 +354,45 @@ def recorder_type(rec):
     rec = rec.split(':')
     return get_recorder_type(rec[0])(*rec[1:])
 
+# convert a string into a time offset
+# --shift 'today' | [-+]<vextime>
+#  'today'                  shift day of observation to today
+#  <vexime>                 shift day of observation to day-of-year in time stamp
+#  +<vextime>, -<vextime>   add/subtract this much to each time stamp
+rxVEXOffset = re.compile(r"^(?P<sign>[-+])?((?P<y>\d+)y)?((?P<d>\d+)d)?((?P<h>\d+)h)?((?P<m>\d+)m)?((?P<s>\d+)s)?$")
+as_vextime  = compose(VEXTime, Call('utctimetuple'))
+maybe_today = choice(partial(eq, "today"), lambda _: as_vextime(datetime.datetime.utcnow()), const(None))
+check_shift = compose(choice(is_none, Error("time-shift argument is not a vextime or 'today' (see --help)"), identity),
+                      combine(logic_or, compose(if_not_none(compose(VEXTime, Call('groupdict'))), rxVEXOffset.match), maybe_today),
+                      partial(re.sub, r"[ \t\n]*", ""), str.strip, str.lower)
+# The codes uses a sidereal day length of 23 hours, 56 minutes, 4seconds
+# when shifting by a number of days
+# (https://en.wikipedia.org/wiki/Sidereal_time)
+siderealday = mk_vextime("0y0d23h56m4s")
+
+# input:  string
+# output: function which returns a function which modifies a time stamp by a certain amount of seconds
+#         based upon the vex object given
+def shift(shift):
+    vext = check_shift(shift)
+    # if there was a sign, it means a relative shift
+    if vext.sign is not None:
+        print("Shifting all UCT times by ",vext)
+        # given any vex object, always return a function which
+        # just adds the number of seconds requested
+        return const(partial(add, vext.sign*vext.seconds))
+    else:
+        # Move to specific day (today, or specific year+doy)
+        # so, given a vex object, we extract the nominal start time and compute the shift wrt to that one
+        def compute_shift(vexf):
+            nominal_start = NominalStart(vexf)
+            # arrange for offset such that if vext > nominal_start the diff is positive
+            # each day adds 23h56m4s 
+            offset = (365 * (vext.y - nominal_start.y) + vext.d - nominal_start.d) * siderealday.seconds + \
+                     (vext.h - nominal_start.h) * 3600 + (vext.m - nominal_start.m) * 60 + (vext.s - nominal_start.s)
+            return partial(add, offset)
+        return compute_shift
+
 
 parsert = argparse.ArgumentParser(description="Transform VEX files to .snp/.prc", add_help=False)
 parsert.add_argument('-h',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
@@ -345,6 +410,8 @@ parsert.add_argument('--recorder', dest='recorder', type=recorder_type, default=
                      help="The recorder type (Mark5C, Mark6) to use")
 parsert.add_argument('--ignore-utc', dest="utc_limit", default=utcsec_now, action="store_const", const=0,
                      help="Ignore current UTC time - i.e. just process all scans even when they cannot be observed anymore")
+parsert.add_argument('--shift', dest='utc_shift', type=shift, default=const(const(identity)),
+                     help="Shift all UTC time stamps in the schedule (see --help for details)")
 parsert.add_argument("vexfile", nargs='*', help="One or more vexfiles to process")
 
 ###################################
@@ -430,7 +497,12 @@ def s2v_r(acc, x):
     acc.time        = remain
     return acc
 sec2vextime = compose(GetA('time_s'), AssertF(compose(not_, GetA('time')), "Non-integer second time stamp is unacceptable"),
-                      Reduce(s2v_r, [(86400, "{0}d".format), (3600, "{0:02d}h".format),
+                      Reduce(s2v_r, [(365*86400, "{0}y".format), (86400, "{0}d".format), (3600, "{0:02d}h".format),
+                                     (60, "{0:02d}m".format), (1, "{0:02d}s".format)]),
+                      lambda x: Type(time_s="", time=x))
+# field system time year.doy.hh:mm:ss
+sec2fstime  = compose(GetA('time_s'), AssertF(compose(not_, GetA('time')), "Non-integer second time stamp is unacceptable"),
+                      Reduce(s2v_r, [(365*86400, "{0}y".format), (86400, "{0}d".format), (3600, "{0:02d}h".format),
                                      (60, "{0:02d}m".format), (1, "{0:02d}s".format)]),
                       lambda x: Type(time_s="", time=x))
 intSec      = compose(int, str.strip, partial(re.sub, r"s(ec)?", r""))
@@ -446,10 +518,10 @@ class Scan(object):
 
     @property
     def start(self):
-        return self.nominal_start + self.offset
+        return self.nominal_start.seconds + self.offset
     @property
     def end(self):
-        return self.nominal_start + self.duration
+        return self.nominal_start.seconds + self.duration
 
 
 def station_scan(station):
@@ -462,7 +534,7 @@ def station_scan(station):
         station_line      = station_line[0] if station_line else None
         if not station_line:
             return None
-        return Scan(mode=scanObj['mode'], nominal_start=vextime2sec(scanObj['start']),
+        return Scan(mode=scanObj['mode'], nominal_start=mk_vextime(scanObj['start']), #nominal_start=vextime2sec(scanObj['start']),
                     source=scanObj['source'], offset=intSec(station_line[1]), label=scanId,
                     year=vexyear(scanObj['start']), duration=intSec(station_line[2]))
     return station_observes
@@ -884,7 +956,8 @@ class Setup(object):
     def procedures(self):
         Assert(self.channels is not None, "No channels defined for setup {0}".format(self.setup))
         # generate the procedure text
-        return [Procedure(self.setup, make_fqlist(self.firmware)(self))]
+        # FIXME TODO XXX    need to do ifread/bbcread depending on firmware!
+        return [Procedure(self.setup, make_fqlist(self.firmware)(self))]# + [] if self.firmware
 
     @property
     def nChannel(self):
@@ -955,18 +1028,19 @@ def resolve_mode(vexobj):
 
 # basic procedures
 
-EXPER        = compose(str.upper, GetN('exper_name'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
+exper_name   = compose(GetN('exper_name'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
+EXPER, exper = (compose(str.upper, exper_name), compose(str.lower, exper_name) )
 NominalStart = compose(mk_vextime, GetN('exper_nominal_start'), GetN(1), next, Call('iteritems'), GetN('EXPER'))
 
 def proc_library(vexfile, userinp):
     # extract station/site info for the given station
     station = mk_station(vexfile, userinp.station)
     return Procedure("proc_library", mk_lines(
-    """ " {exper} {SITE} {station}\n
+    """ " {experiment} {SITE} {station}\n
      " vex2snap/Python version {version} by Harro Verkouter, JIVE\n
      " based on vex2snap version 2014_nov_06 by DG and UB, MPIfR\n
      "< {RACK}  rack>< {recorder: <10s}recorder 1>< None    recorder 2>""".format(
-             exper=EXPER(vexfile), station=userinput.station,
+             experiment=EXPER(vexfile), station=userinput.station,
              SITE=station.site.site_name, RACK=station.das.electronics_rack_type,
              recorder=str(userinput.recorder or station.das.record_transport_type), **globals())), initial_newline="")
 
@@ -987,13 +1061,13 @@ def snap_header(vexfile, userinp):
     # extract experiment nominal start
     nom_start = NominalStart(vexfile)
     return comment("""
-    {exper} {nom_start.y} {SITE} H {userinp.station}\n
+    {experiment} {nom_start.y} {SITE} H {userinp.station}\n
     H {SITE} AZEL sss  s s s s s s s  {userinp.station}\n
     {userinp.station} {SITE} {station.site.site_position_snap}\n
     vex2snap/Python version {version} by Harro Verkouter, JIVE\n
       based on vex2snap version 2014_nov_06 by DG and UB, MPIfR\n
     Rack={station.das.electronics_rack_type}  Recorder 1={recorder}  Recorder 2=none""".format(version=version,
-             exper=EXPER(vexfile), SITE=station.site.site_name,
+             experiment=EXPER(vexfile), SITE=station.site.site_name,
              recorder = str(userinput.recorder or station.das.record_transport_type), **locals()))
 
 # ordered dict with a tiny twist -
@@ -1021,6 +1095,9 @@ def process_vex(vexfile):
     with OpenVex(vexfile) as vexf:
         # extract station information
         station = mk_station(vexf, userinput.station)
+
+        # get the time-shifting function
+        t_shift = userinput.utc_shift( vexf )
 
         # Generate the output file names: destination/<exper><station>.{prc, snp, lst}
         files   = output_files(vexf, userinput.station)
@@ -1074,6 +1151,10 @@ def process_vex(vexfile):
         # so we can properly add initialization commands for all used dbe's to
         # the appropriate procedures
         for dbe in get_all_dbes(setups):
+            # XXX TODO FIXME
+            # ifread for all firmwares
+            #  bbcread for DDC4, + bbcread2 for DDC8
+            #  dbe_quantize=hold_set for PFB
             for p, lst in [(preob, ["rdbe_cmd={dbe},3,dbe_quantize=hold_set;".format]),
                     ("sched_initi", ["rdbe_cmd={dbe},3,dbe_data_send=on;".format,
                                      "rdbe_time={dbe},3".format, 
@@ -1107,7 +1188,6 @@ def process_vex(vexfile):
 
         sources = source_lut(vexf)
 
-
         #print("Scans: ", Map(GetA('label'))(scans))
         #print("Setups:", setups)
         #print("Modes: ", modes)
@@ -1116,8 +1196,34 @@ def process_vex(vexfile):
         for p in procedures.values():
             sys.stdout.write(str(p))
 
-        print(snap_header(vexf, userinput))
-        print(mk_station(vexf, userinput.station))
+        sys.stdout.write("\n".join(snap_header(vexf, userinput)))
+
+        # loop over all scans for the station
+        end_time = 0
+        exp_snap = exper( vexf )
+        setup    = None
+
+        for scan in scans:
+            print("Scan:",str(scan))
+            scanLines = mk_lines("""
+                    scan_name={scan.label},{exp_snap},{userinput.station},{scan.duration},{scan.duration}\n
+                    source={scan.source},{sources[scan.source].ra_snap},{sources[scan.source].dec_snap}\n""".format(
+                        scan=scan, sources=sources, userinput=userinput,exp_snap=exp_snap))
+            if not end_time:
+                scanLines.append( "ready_disk" )
+            # switch to setup for current scan if different
+            scan_setup = setup[scan.mode].setup
+            if setup != scan_setup:
+                scanLines.append( scan_setup )
+                setup = scan_setup
+            # wait for scan start
+            scanLines.append( mk_lines("""
+                !{preob_time}\n
+                preob\n""".format(preob_time=sec2fstime(scan.nominal_start.seconds-10)) ))
+            scanLines.append("""
+                !{scan.nominal_start.as_fstime}""".format(**locals()) )
+            end_time = scan.nominal_start.seconds + scan.duration
+            sys.stdout.write("\n".join(scanLines))
     return None
 
 # main loop: iterate over all command line arguments
