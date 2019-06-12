@@ -9,12 +9,15 @@
 #   Options:
 #            --help             show short help
 #            --usage            show this built-in help
-#            --version          print version and exit succesfully
+#            -v, --version      print version and exit succesfully
 #            --station          Two-letter station code to generate .prc/.snp for
 #            --dest             set destination path for output files
 #                               [default: /usr2/sched]
-#            --recorder TYPE[:DISKS]
-#                               TYPE  = Mark5C | Mark6
+#            --recorder TYPE[:DISKS] Override scheduled recorder from VEX file
+#                               By default vex2snap will use the recorder defined
+#                               in the VEX file for the selected station. Override
+#                               by using this option.
+#                               TYPE  = Mark5C | Mark6 | none
 #                               DISKS = (only if TYPE=Mark6)
 #                                       argument to "set_disks=", specify on which  
 #                                       disks or module to record the experiment
@@ -28,8 +31,7 @@
 #   Description:
 #
 #   vex2snap reads the vex file(s) and extracts the useful information for the
-#   station indicated by XX. It starts by analyzing the scans where this station
-#   is in and extracting the necessary setups for those.
+#   station indicated by XX. Setups are generated for all modes found for station XX.
 #
 #   Based on that information a .prc file with initialization and setup
 #   procedures is created. A snap file containing the actions for the whole
@@ -158,7 +160,7 @@ class OrderedDefaultDict(collections.OrderedDict):
 # convert any sequence of (y, doy, hh, mm, ss) into seconds-within-year
 yhms2sec    = compose(sum, StarMap(mul), Zip([0, 86400, 3600, 60, 1]), Map(int))
 # extract those values from an utctimetuple()
-utsec_year  = compose(yhms2sec, GetA('tm_yday', 'tm_hour', 'tm_min', 'tm_sec'), Call('utctimetuple'))
+utsec_year  = compose(yhms2sec, GetA('tm_year', 'tm_yday', 'tm_hour', 'tm_min', 'tm_sec'), Call('utctimetuple'))
 # extract them from a VEX time stamp 
 rxVEXtime    = re.compile(r"^(?P<y>\d+)y(?P<d>\d+)d(?P<h>\d+)h(?P<m>\d+)m(?P<s>\d+)s$")
 vextime2sec = compose(yhms2sec, Call('groups'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
@@ -166,12 +168,16 @@ utcsec_now  = utsec_year( datetime.datetime.utcnow() )
 
 class VEXTime(object):
     __slots__ = ['y', 'd', 'h', 'm', 's']
-
+    __xform__ = {'y':int, 'd':int, 'h':int, 'm':int, 's':float}
     # assume we're constructed from a matchresult from matching rxVEXtime
     def __init__(self, matchdict):
-        reduce(lambda acc, attr: setattr(acc, attr, matchdict.pop(attr, None)) or acc, VEXTime.__slots__, self)
+        reduce(lambda acc, attr: setattr(acc, attr, VEXTime.__xform__.get(attr, identity)(matchdict.pop(attr, None))) or acc,
+               VEXTime.__slots__, self)
+
+        __repr__ = method("{0.y:04d}y{0.d:02d}d{0.h:02d}h{0.m:02d}m{0.s:6.3f}".format)
         
 mk_vextime  = compose(VEXTime, Call('groupdict'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
+
 
 ####################################################
 #  A snap procedure
@@ -324,11 +330,11 @@ def recorder_type(rec):
 
 
 parsert = argparse.ArgumentParser(description="Transform VEX files to .snp/.prc", add_help=False)
-parsert.add_argument('--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
-parsert.add_argument('--usage',  nargs=0, action=PrintUsage, help="Show built-in usage")
+parsert.add_argument('-h',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
+parsert.add_argument('--help',  nargs=0, action=PrintUsage, help="Show built-in usage")
 parsert.add_argument('--debug',  dest='debug', action='store_true', default=False, 
                      help="Print debugging information")
-parsert.add_argument('--version', action='version', version=version, help="Print current version and exit succesfully")
+parsert.add_argument('-v', '--version', action='version', version=version, help="Print current version and exit succesfully")
 parsert.add_argument('--dest', dest='output_path', type=str, default="/usr2/sched",
                      help="Location where to store output .prc/.snp files")
 parsert.add_argument('--force', dest='file_exists', action="store_const", const=const(False), default=os.path.isfile,
