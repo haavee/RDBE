@@ -192,10 +192,11 @@ class VEXTime(object):
 
     def __add__(self, other):
         if type(other) is type(0):
-            return self + mk_vextime(sec2vextime(other))
+            return self + sec2VEXTime(other)
         if type(other) is not VEXTime:
             return NotImplemented
-        return mk_vextime(sec2vextime(self.seconds + other.seconds))
+        # by using the .seconds property we get the sign handled just fine
+        return sec2VEXTime(self.seconds + other.seconds )
 
     @property
     def seconds(self):
@@ -215,6 +216,7 @@ class VEXTime(object):
         return "{1}{0.y:04d}y{0.d:02d}d{0.h:02d}h{0.m:02d}m{0.s:06.3f}s".format(self, VEXTime._signC_[self.sign])
 
         
+# FIXME TODO XXX   doy is 1-based in output so when reading from string must subtract one
 mk_vextime  = compose(VEXTime, Call('groupdict'), rxVEXtime.match, partial(re.sub, r"[ \t\n]*", r""))
 
 ####################################################
@@ -529,37 +531,44 @@ def reduce_seconds(acc, x):
 # decomposing seconds into year, day, hh, mm, ss
 # feed in: what to do with the components (e.g. string formatting, setting keys in dict)
 #          what to do with the result?
-
 def mk_reductor(outer_reductor):
     def inner_reductor(inner_acc, field_action):
         (time, outer_acc) = inner_acc
         (divisor,     fn) = field_action
-        (whole, remain)   = divmod(time, divisor)
+        (whole, remain)   = (remain, 0) if divisor is None else divmod(time, divisor)
         return (remain, outer_reductor(outer_acc, fn(whole)))
     return inner_reductor
 
 # given a list of field actions, an initial accumulator and a reductor function
 # return a function which will decompose a number of seconds into a succession
 # of years, days, hours, minutes, seconds, call the field actions on them
-# and use the reducing functions to produce a single return value
+# and use the reducing functions to produce (remain, result)
+# If seconds is fractional, the final element can be retrieved by having one more action
 def decompose_seconds(reductor, actions):
-    field_actions  = zip([365*86400, 86400, 3600, 60, 1], actions)
+    field_actions  = zip([365*86400, 86400, 3600, 60, 1, None], actions)
     inner_reductor = mk_reductor(reductor)
     def _reduce(seconds, init):
         return reduce(inner_reductor, field_actions, (seconds, init))
     return _reduce
 
-sec2vextime = compose(choice(GetA('time'), Error("Non-integer second time stamp is unacceptable".format), GetA('time_s')),
-                      Reduce(reduce_seconds, [(365*86400, "{0}y".format), (86400, "{0}d".format), (3600, "{0:02d}h".format),
-                                     (60, "{0:02d}m".format), (1, "{0:02d}s".format)]),
-                      lambda x: Type(time_s="", time=x))
-# field system time year.doy.hh:mm:ss
-sec2fstime  = compose(choice(GetA('time'), Error("Non-integer second time stamp is unacceptable".format), GetA('time_s')),
-                      Reduce(reduce_seconds, [(365*86400, "{0}.".format), (86400, "{0}.".format), (3600, "{0:02d}:".format),
-                                     (60, "{0:02d}:".format), (1, "{0:02d}".format)]),
-                      lambda x: Type(time_s="", time=x))
-intSec      = compose(int, str.strip, partial(re.sub, r"s(ec)?", r""))
+# Assert that the remainder of a second reduction is 0
+check_int_tm = choice(GetN(0), Error("Non-integer second time stamp is unacceptable".format), GetN(1))
 
+# FIXME TODO XXX   doy is 1-based in output so when reading from string must subtract one
+#  vextime format 0000y000d00h00m00s
+vextimefields=["{0:04d}y".format, "{0:03}d".format, "{0:02d}h".format, "{0:02d}m".format, "{0:02d}s".format]
+sec2vextime  = lambda seconds: check_int_tm(decompose_seconds(add, vextimefields)(seconds, ""))
+
+#  snap time formt 0000.000.00:00:00
+fstimefields =["{0}.".format, "{0}.".format, "{0:02d}:".format, "{0:02d}:".format, "{0:02d}".format]
+sec2fstime   = lambda seconds: check_int_tm(decompose_seconds(add, fstimefields )(seconds, ""))
+
+# Write the decomposed elements from seconds directly into an empty VEXTime
+SetAttr       = lambda acc, action: setattr(acc, action[0], action[1]) or acc
+vtactions     = map(lambda a: (lambda v: (a, v)), "ydhms")
+sec2VEXTime   = lambda seconds: decompose_seconds(SetAttr, vtactions)(seconds, VEXTime(dict()))[1]
+
+intSec        = compose(int, str.strip, partial(re.sub, r"s(ec)?", r""))
 
 class Scan(object):
     __slots__ = ['mode', 'label', 'nominal_start', 'source', 'offset', 'duration']
@@ -569,10 +578,6 @@ class Scan(object):
     def __init__(self, **obj):
         reduce(lambda a, k: setattr(a, k, Scan.__xform__.get(k, identity)(obj.get(k, None))) or a, Scan.__slots__, self)
         Assert(self.duration>self.offset, "Attempt to observe scan where data-good > scan duration")
-
-    # initialize from keywordargs
-    #def __init__(self, **kwargs):
-    #    reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Scan.__slots__, self)
 
     @property
     def start(self):
@@ -1316,7 +1321,11 @@ def process_vex(vexfile):
         into_snp("\nsched_end")
     return None
 
-# main loop: iterate over all command line arguments
+###################################################################################################
+#
+#         main loop: iterate over all vexfiles given
+#
+###################################################################################################
 main = Map(compose(process_vex, MSG("Start processing")))
 
 main(userinput.vexfiles)
