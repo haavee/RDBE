@@ -1155,7 +1155,7 @@ def process_vex(vexfile):
         setups = reduce(resolve_mode(vexf), modes.iteritems(), dict())
 
         # We want the procedures to be ordered - at least some of them
-        procedures = MOrderedDict()#collections.OrderedDict()
+        procedures = MOrderedDict()
 
         for proc in standard_procedures(vexf, userinput):
             procedures[proc] = proc
@@ -1182,6 +1182,7 @@ def process_vex(vexfile):
         # we can extract the set of all dbe's ever used in all setups
         # so we can properly add initialization commands for all used dbe's to
         # the appropriate procedures. Feel free to add other per-dbe stuff here
+        procecures["sched_initi"].append( "rdbe_init" )
         for dbe in get_all_dbes(setups):
             for p, lst in [("sched_initi", ["rdbe_cmd={dbe},3,dbe_data_send=on;".format,
                                             "rdbe_time={dbe},3".format, 
