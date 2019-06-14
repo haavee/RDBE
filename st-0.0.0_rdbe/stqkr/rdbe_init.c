@@ -1,3 +1,4 @@
+#define _BSD_SOURCE
 #include <stdio.h>          // Needed for printf()
 #include <string.h>         // Needed for memcpy() and strcpy()
 #include <sys/types.h>    // Needed for system defined identifiers.
@@ -9,6 +10,7 @@
 #include <sys/select.h>   // extra stuff select & timeout
 #include <time.h>
 #include <sys/time.h>
+#include <stdlib.h>
 #include "../include/stparams.h"
 #include "../include/stcom.h"
 #include "../include/stm_addr.h"
@@ -165,7 +167,7 @@ int itask;
         if( rdbe==0 ) {
             strncpy(stm_addr->dbe0_add, host, sizeof(stm_addr->dbe0_add));
             stm_addr->dbe0_add[ sizeof(stm_addr->dbe0_add)-1 ] = '\0';
-        } else if( rdbe==1 )
+        } else if( rdbe==1 ) {
             strncpy(stm_addr->dbe1_add, host, sizeof(stm_addr->dbe1_add));
             stm_addr->dbe1_add[ sizeof(stm_addr->dbe1_add)-1 ] = '\0';
         } else if( port==PORT_T450 ) {
@@ -208,7 +210,7 @@ int itask;
             /* Don't even try to resolve if nothing given */
             if( strlen(broadcast)==0 )
                 continue;
-            if( resolve_host(broadcast, SOCK_DGRAM, IPPROTO_UDP, &stm_addr->rdbe[rdbe].tsys_addr)!=0 ) {
+            if( resolve_host(broadcast, SOCK_DGRAM, IPPROTO_UDP, &stm_addr->rdbe[rdbe].tsys_mon)!=0 ) {
                 printf("Unresolvable tsys_mon broadcast addr '%s' at line #%d\n", broadcast, linenr);
                 ierr = -539;
                 continue;
@@ -219,7 +221,7 @@ int itask;
                     ierr = -539;
                     continue;
                 }
-                stm_addr->rdbe[rdbe].tsys_addr.sin_port = htons( port );
+                stm_addr->rdbe[rdbe].tsys_mon.sin_port = htons( port );
             }
         }
         linenr++;
@@ -243,17 +245,17 @@ int itask;
         char reply[200];
         char ipa[4][INET_ADDRSTRLEN];
 
-        inet_ntoa_r(stm_addr->rdbe[0].addr.sin_addr, ipa[0], INET_ADDRSTRLEN);
-        inet_ntoa_r(stm_addr->rdbe[1].addr.sin_addr, ipa[1], INET_ADDRSTRLEN);
-        inet_ntoa_r(stm_addr->t450_addr.sin_addr,    ipa[2], INET_ADDRSTRLEN);
-        inet_ntoa_r(stm_addr->essr_addr.sin_addr,    ipa[3], INET_ADDRSTRLEN);
+        strcpy(ipa[0], inet_ntoa(stm_addr->rdbe[0].addr.sin_addr));
+        strcpy(ipa[1], inet_ntoa(stm_addr->rdbe[1].addr.sin_addr));
+        strcpy(ipa[2], inet_ntoa(stm_addr->t450_addr.sin_addr));
+        strcpy(ipa[3], inet_ntoa(stm_addr->essr_addr.sin_addr));
 
-        nc = snprintf(reply, sizeof(reply), "rdbe_addr/%s#%s#%s#%s", ipa[0], ipa[1], ipa[2], ipa[3])
+        nc = snprintf(reply, sizeof(reply), "rdbe_addr/%s#%s#%s#%s", ipa[0], ipa[1], ipa[2], ipa[3]);
         if( nc>sizeof(reply) )
             printf("Reply string was too long, lost %d characters from reply\n", nc-sizeof(reply));
         /* Set up return values */
         for (i=0;i<5;i++) ip[i]=0;
-        cls_snd(&ip[0], output, nc, 0, 0);
+        cls_snd(&ip[0], reply, nc, 0, 0);
         ip[1]=1;
     } else {
         clear_addresses();

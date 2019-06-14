@@ -4,6 +4,11 @@
 #include <sys/types.h>  /* data type definition header file */
 #include <sys/ipc.h>    /* interprocess communications header file */
 #include <sys/shm.h>    /* shared memory header file */
+#include <netinet/in.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 #include "../../fs/include/pmodel.h"
 
@@ -186,12 +191,12 @@ int resolve_host(const char* host, int socktype, int protocol, struct sockaddr_i
 
         // Scan the results for an IPv4 address
         dst->sin_addr.s_addr = INADDR_ANY;
-        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_ANY; rp=rp->ai_next)
+        for(rp=resultptr; rp!=0 && dst->sin_addr.s_addr==INADDR_ANY; rp=rp->ai_next)
             if( rp->ai_family==AF_INET )
                 dst->sin_addr = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
 
         // don't need the list of results anymore
         freeaddrinfo(resultptr);
     }
-    return (dst.sin_addr.s_addr==INADDR_ANY)?-1:0;
+    return (dst->sin_addr.s_addr==INADDR_ANY)?-1:0;
 }
