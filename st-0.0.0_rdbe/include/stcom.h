@@ -1,5 +1,44 @@
 /* stcom.h - dummy
  */
+#include <netinet/in.h>
+
+/* describes a channel (sorry, at this point don't actually know
+ * exactly what that means - pfb channel? I dunno) */
+typedef struct _rdbe_channel_t {
+    int     IF;
+    int     tk;
+    char    pol;
+    float   tcal;
+    double  chanfreq;
+} rdbe_channel_t;
+
+/* RDBEs have physical inputs */
+typedef struct _rdbe_input_t {
+    char    iflet;      /* Which IF is this input connected to? [ABCD...] */
+    double  caloff[32]; /* Tsys readout */
+    double  calon[32];
+} rdbe_input_t;
+
+/* RDBEs have a number of digital downconverters */
+typedef struct _rdbe_ddc_t {
+    int     decimation; /* decimating 128MHz by factor */
+    int     mode;
+    float   frequency;
+    float   xbar;
+} rdbe_ddc_t;
+
+typedef struct _rdbe_t {
+    struct sockaddr_in  addr;        /* The IP:PORT to connect to RDBE server */
+    struct sockaddr_in  tsys_mon;    /* The broadcast address where this RDBE sends tsys data to */
+    struct sockaddr_in  1pps_mon;    /* id. for the 1PPS */
+
+    rdbe_input_t        input[2];    /* each RDBE has two inputs */
+    rdbe_channel_t      channel[32]; /* 32 channels is overkill */
+    rdbe_ddc_t          dc[8];       /* only four usable but XBAR goes to eight */
+} rdbe_t;
+
+
+
 
 typedef struct stcom {
   int dummy;              /* just a dummy */
@@ -64,5 +103,8 @@ typedef struct stcom {
 //-----------------------------------
   char dbe0_add[20],dbe1_add[20],t450_add[20],essr_add[20];  //put machines here at init
   char dbe_personality[20];
+
+  /* HV: 14 Jun 2019 - new style administration starts */
+  rdbe_t    rdbe[2];
 
 } Stcom;

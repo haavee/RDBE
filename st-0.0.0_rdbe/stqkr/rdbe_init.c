@@ -43,23 +43,50 @@ int itask;
     char me [] ="rdbe";
 //    char *ptok;
 //    int itimeout;
+    char reply[200];
+/*
     char output[200],data[200];
+    */
 //    int i,idummy,len;
 //    char                 out_buf[200];    // output buffer for data
 //    fd_set in_fdset;
 //    struct itimerval value;
 //    int retval;
-    int ierr,i;
+    int     ierr, i;
 
-    FILE *fp;
+    FILE*   fp;
+    char*   line  = NULL;
+    size_t  nchar = 0;
+    ssize_t nread;
+/*
     char rd1[40],rd2[40];
     char dbe0_add[20],dbe1_add[20],t450_add[20];
+    */
 //===================================
     ierr=0;
     if ( (fp = fopen(CONTROL_FILE,"r")) == NULL) {
         printf("cannot open RDBE address file %s\n",CONTROL_FILE);
         ierr=-539; goto error; 
     }
+    /* cf.
+     * http://pubs.opengroup.org/onlinepubs/9699919799/functions/getdelim.html
+     */
+    while( (nread=(getline(&line, &nchar, fp)))!=-1 ){
+        char*    ptr     = line, *item;
+        char*    comment = strchr(line, '*');
+        /* Discard comment */
+        if( comment!=NULL )
+            *comment = '\0';
+        /* Skip whitespace */
+        while( isspace(*ptr) )
+            ptr++;
+        /* Anything left, otherwise read next line */
+        if( !*ptr )
+            continue;
+        /* Start tokenizing the line by whitespace */
+        item = strtok(ptr, "");
+    }
+/*
     while (!feof(fp)){
        fscanf(fp, "%s %s", &rd1,&rd2);
 //       printf("%s %s\n", rd1,rd2);
@@ -68,6 +95,7 @@ int itask;
        if(strncmp(rd1,"T450",4)==0)strcpy(stm_addr->t450_add,rd2);
        if(strncmp(rd1,"ESSR",4)==0)strcpy(stm_addr->essr_add,rd2);
     }
+*/
     sprintf(data,"%s#%s#%s#%s",stm_addr->dbe0_add,stm_addr->dbe1_add,stm_addr->t450_add,stm_addr->essr_add); 
     strcpy(output,"rdbe_addr/");
     strcat(output,data);
