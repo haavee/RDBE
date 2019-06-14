@@ -156,3 +156,42 @@ int *b_write;
     }
     s1=memcpy(start[ipts],(char *)b_write,chars[ipts]);
 }
+
+
+/* Resolve a hostname in dotted quad notation or canonical name format
+   to an IPv4 address. Returns 0 on success after filling in the
+   "dst.sin_addr" member */
+int resolve_host(const char* host, int socktype, int protocol, struct sockaddr_in* dst) {
+    // First try the simple conversion, otherwise we need to do
+    // a lookup
+    // inet_pton is POSIX and returns -1 if the string is
+    // NOT in dotted-decimal format. Then we fall back to getaddrinfo(3)
+    if( inet_pton(AF_INET, host, &dst->sin_addr)!=1 ) {
+        int                gai_error;
+        struct addrinfo    hints;
+        struct addrinfo*   resultptr = 0, *rp;
+
+        // Provide some hints to the address resolver about
+        // what it is what we're looking for
+        memset(&hints, 0, sizeof(struct addrinfo));
+        hints.ai_family   = AF_INET;     // IPv4 only at the moment
+        hints.ai_socktype = socktype;    // only the socket type we require
+        hints.ai_protocol = protocol;    // Id. for the protocol
+
+        if( (gai_error=getaddrinfo(host, 0, &hints, &resultptr))!=0 ) {
+            printf("resolve_host[%s] %s\n", host, gai_strerror(gai_error));
+            freeaddrinfo(resultptr);
+            return -1;
+        }
+
+        // Scan the results for an IPv4 address
+        dst->sin_addr.s_addr = INADDR_ANY;
+        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_ANY; rp=rp->ai_next)
+            if( rp->ai_family==AF_INET )
+                dst->sin_addr = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
+
+        // don't need the list of results anymore
+        freeaddrinfo(resultptr);
+    }
+    return (dst.sin_addr.s_addr==INADDR_ANY)?-1:0;
+}

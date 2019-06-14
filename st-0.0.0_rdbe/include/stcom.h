@@ -104,7 +104,8 @@ typedef struct stcom {
   char dbe0_add[20],dbe1_add[20],t450_add[20],essr_add[20];  //put machines here at init
   char dbe_personality[20];
 
-  /* HV: 14 Jun 2019 - new style administration starts */
-  rdbe_t    rdbe[2];
-
+    /* HV: 14 Jun 2019 - new style administration starts */
+    rdbe_t             rdbe[2];
+    struct sockaddr_in t450_addr;
+    struct sockaddr_in essr_addr;
 } Stcom;
