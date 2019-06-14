@@ -61,7 +61,7 @@ method      = lambda f      : (lambda *args, **kwargs: f(*args, **kwargs))
 swap_args   = lambda f      : (lambda a, b, *args, **kwargs: f(b, a, *args, **kwargs))
 logic_or    = lambda x, y   : x or y                              # operator.__or__ / __and__ are /bitwise/ ops!
 logic_and   = lambda x, y   : x and y                             #               ..
-const       = lambda x      : (lambda _: x)                       # return the same value irrespective of input
+const       = lambda x      : (lambda *_, **__: x)                # return the same value irrespective of input
 identity    = lambda x      : x                                   # probably the most undervalued operator
 between     = lambda a, b   : (lambda x: a<=x<b)                  # missing from module 'operator'?
 # our getitem_ always returns a tuple of value(s)
@@ -176,7 +176,6 @@ class VEXTime(object):
                   'm':if_not_none(int, 0), 's':if_not_none(float,0.0), 'sign':if_not_none(sign2int)}
     # fields to convert from time.time_tuple into our own
     _ttcnv_    = {'tm_year':'y', 'tm_yday':'d', 'tm_hour':'h', 'tm_min':'m', 'tm_sec':'s', 'non_existent':'sign'} 
-    _tuple_    = GetA('y', 'd', 'h', 'm', 's')
     _signC_    = {None:"", 1:"+", -1:"-"}
     _signV_    = {int:identity, type(None):const(1), str:sign2int}
 
@@ -203,14 +202,11 @@ class VEXTime(object):
         # depending on the type of the sign attribute's value convert to either +1 or -1
         return VEXTime._signV_[type(self.sign)](self.sign) * yhms2sec( self.tuple )
 
-    @property
-    def tuple(self):
-        return VEXTime._tuple_(self)
+    # return a tuple (y, d, h, m, s)
+    tuple     = property(GetA('y', 'd', 'h', 'm', 's'))
 
     # fstime is year.doy.hh:mm:ss
-    @property
-    def as_fstime(self):
-        return "{0.y:04d}.{0.d:03d}.{0.h:02d}:{0.m:02d}:{0.s:02.0f}".format(self)
+    as_fstime = property("{0.y:04d}.{0.d:03d}.{0.h:02d}:{0.m:02d}:{0.s:02.0f}".format)
 
     def __repr__(self):
         return "{1}{0.y:04d}y{0.d:02d}d{0.h:02d}h{0.m:02d}m{0.s:06.3f}s".format(self, VEXTime._signC_[self.sign])
@@ -240,8 +236,7 @@ class Procedure(object):
         self.lines.extend(lineify(line))
         return self
 
-    def __hash__(self):
-        return hash(self.name)
+    __hash__  = compose(hash, GetA('name'))
 
     def __str__(self):
         return "{0}define  {1: <12s} 00000000000x\n".format(self.initial_newline, self.name) + "\n".join(self.lines)+"\nenddef"
@@ -251,27 +246,28 @@ class Procedure(object):
 ###################################################
 
 # break string at '\n', strip leading/trailing whitespace, filter out non-empty ones and prepend each one with something
-prefix  = lambda pfx: compose(Map(partial(add, pfx)), Filter(truth), Map(str.strip), Call('split', '\n'))
-mk5     = prefix("mk5=")
-comment = prefix('"')
-rdbe_cmd= prefix("rdbe_cmd=")
+prefix      = lambda pfx: compose(Map(partial(add, pfx)), Filter(truth), Map(str.strip), Call('split', '\n'))
+mk5         = prefix("mk5=")
+comment     = prefix('"')
+rdbe_cmd    = prefix("rdbe_cmd=")
+const_lines = compose(const, mk_lines)
 
 class Recorder(object):
     def procedures(self):
         # it'll be jive5ab so we can issue these commands just fine
         return [Procedure("sched_initi", mk5("os_rev?\nversion?"))]
 
+##############   The "none" recorder
 class RecorderNone(Recorder):
-    __repr__ = method(const("None"))
+    __repr__         = const("None")
 
-    def procedures(self):
-        return list()
-    def setup_procedures(self, setup):
-        return list()
+    # the null recorder has no procedures nor ready_disk/record_{on,off} commands
+    procedures       = setup_procedures = ready_disk = record_on = record_off = const(list())#lambda *_, **__: list()
 
 
+##############   The Mark5C recorder
 class Mark5C(Recorder):
-    __repr__ = method(const("Mark5C"))
+    __repr__ = const("Mark5C")
 
     def __init__(self):
         self.procedure_lst = [Procedure("sched_initi", mk5("ss_rev?"))]
@@ -300,18 +296,14 @@ class Mark5C(Recorder):
         return [setup_p]
 
     # what needs to be done on ready_disk at start of experiment
-    def ready_disk(self):
-        return mk_lines("ready_disk\nbank_set?\npointers?\nbank_info?")
+    # and what to do to switch recording on/off
+    ready_disk = const_lines("ready_disk\nbank_set?\npointers?\nbank_info?")
+    record_on  = const_lines("disk_pos\ndisk_record=on\ndisk_record\ndata_valid=on")
+    record_off = const_lines("data_valid=off\ndisk_record=off\ndisk_pos")
 
-    # what to do to switch recording on/off
-    def record_on(self, scan):
-        return mk_lines("disk_pos\ndisk_record=on\ndisk_record\ndata_valid=on")
-
-    def record_off(self, scan):
-        return mk_lines("data_valid=off\ndisk_record=off\ndisk_pos")
-
+##############   The Mark6 recorder
 class Mark6(Recorder):
-    __repr__ = method(const("Mark6"))
+    __repr__ = const("Mark6")
 
     def __init__(self, disks=None):
         initi = Procedure("sched_initi")
@@ -350,15 +342,10 @@ class Mark6(Recorder):
         return [setup_p]
 
     # what needs to be done on ready_disk at start of experiment
-    def ready_disk(self):
-        return mk_lines("mk5=set_disks?")
-
-    # what to do to switch recording on/off
-    def record_on(self, scan):
-        return mk_lines("disk_record=on\ndisk_record\ndata_valid=on")
-
-    def record_off(self, scan):
-        return mk_lines("data_valid=off\ndisk_record=off")
+    # and what to do to switch recording on/off
+    ready_disk = const(mk5("set_disks?"))
+    record_on  = const_lines("disk_record=on\ndisk_record\ndata_valid=on")
+    record_off = const_lines("data_valid=off\ndisk_record=off")
 
 #############################################################################
 #
@@ -522,14 +509,8 @@ class OpenVex(object):
     def __exit__(self, e, t, f):
         return
 
-def reduce_seconds(acc, x):
-    (whole, remain) = divmod(acc.time, x[0])
-    acc.time_s     += x[1](whole)
-    acc.time        = remain
-    return acc
-
 # decomposing seconds into year, day, hh, mm, ss
-# feed in: what to do with the components (e.g. string formatting, setting keys in dict)
+# feed in: what to do with the components (e.g. string formatting, make tuple with attr name+value?)
 #          what to do with the result?
 def mk_reductor(outer_reductor):
     def inner_reductor(inner_acc, field_action):
@@ -539,7 +520,7 @@ def mk_reductor(outer_reductor):
         return (remain, outer_reductor(outer_acc, fn(whole)))
     return inner_reductor
 
-# given a list of field actions, an initial accumulator and a reductor function
+# given a list of field actions and a reductor function
 # return a function which will decompose a number of seconds into a succession
 # of years, days, hours, minutes, seconds, call the field actions on them
 # and use the reducing functions to produce (remain, result)
@@ -557,11 +538,13 @@ check_int_tm = choice(GetN(0), Error("Non-integer second time stamp is unaccepta
 # FIXME TODO XXX   doy is 1-based in output so when reading from string must subtract one
 #  vextime format 0000y000d00h00m00s
 vextimefields=["{0:04d}y".format, "{0:03}d".format, "{0:02d}h".format, "{0:02d}m".format, "{0:02d}s".format]
-sec2vextime  = lambda seconds: check_int_tm(decompose_seconds(add, vextimefields)(seconds, ""))
+sec2vextime_ = decompose_seconds(add, vextimefields)
+sec2vextime  = lambda seconds: check_int_tm(sec2vextime_(seconds, ""))
 
 #  snap time formt 0000.000.00:00:00
 fstimefields =["{0}.".format, "{0}.".format, "{0:02d}:".format, "{0:02d}:".format, "{0:02d}".format]
-sec2fstime   = lambda seconds: check_int_tm(decompose_seconds(add, fstimefields )(seconds, ""))
+sec2fstime_  = decompose_seconds(add, fstimefields)
+sec2fstime   = lambda seconds: check_int_tm(sec2fstime_(seconds, ""))
 
 # Write the decomposed elements from seconds directly into an empty VEXTime
 SetAttr       = lambda acc, action: setattr(acc, action[0], action[1]) or acc
@@ -579,18 +562,12 @@ class Scan(object):
         reduce(lambda a, k: setattr(a, k, Scan.__xform__.get(k, identity)(obj.get(k, None))) or a, Scan.__slots__, self)
         Assert(self.duration>self.offset, "Attempt to observe scan where data-good > scan duration")
 
-    @property
-    def start(self):
-        return self.nominal_start.seconds + self.offset
-    @property
-    def end(self):
-        return self.nominal_start.seconds + self.duration
-    @property
-    def label_snap(self):
-        return self.label.lower()
-    @property
-    def nominal_end(self):
-        return self.nominal_start + self.duration
+    # .start, .end                 are the values in units of seconds
+    # .nominal_start, .nomimal_end are the VEXTime objects
+    start       = property(lambda s: s.nominal_start.seconds + s.offset)
+    end         = property(lambda s: s.nominal_start.seconds + s.duration)
+    nominal_end = property(lambda s: s.nominal_start + s.duration)
+    label_snap  = property(compose(str.lower, GetA('label')))
 
     __repr__ = method("{0.label}: {0.source} from {0.nominal_start}+{0.duration} using {0.mode}".format)
 
@@ -637,16 +614,9 @@ class Source(object):
 
     # ra,dec in snap format are basically stuff from the vex file with hms
     # and d'" removed?
-    @property
-    def ra_snap(self):
-        return radec2snap(self.ra)
-    @property
-    def dec_snap(self):
-        return radec2snap(self.dec)
-    @property
-    def ref_coord_frame_snap(self):
-        return ref2snap(self.ref_coord_frame)
-
+    ra_snap              = property(compose(radec2snap, GetA('ra')))
+    dec_snap             = property(compose(radec2snap, GetA('dec')))
+    ref_coord_frame_snap = property(compose(ref2snap, GetA('ref_coord_frame')))
 
     __str__  = method("{0.source_name}@RA/DEC={0.ra}/{0.dec} {0.ref_coord_frame}".format)
     __repr__ = __str__
@@ -666,11 +636,8 @@ class Site(object):
     def __init__(self, vexobj):
         reduce(lambda acc, attr: setattr(acc, attr, Site.__xform__.get(attr, identity)(vexobj[attr])) or acc, Site.__slots__, self)
 
-    __str__  = method("site {0.site_name} @{0.site_position}".format)
-
-    @property
-    def site_position_snap(self):
-        return " ".join(map(str, self.site_position))
+    __str__            = method("site {0.site_name} @{0.site_position}".format)
+    site_position_snap = property(compose(" ".join, Map(str), GetA('site_position')))
 
 class DAS(object):
     __slots__ = ['record_transport_type', 'electronics_rack_type']
@@ -740,19 +707,19 @@ mk_vex_lut = lambda sect, defname, key:compose(DD("VEX lut[{0}.{1}".format(sect,
                                                Call('getall', key), GetN(defname), GetN(sect))
 
 # shorthands for converting vex file values to canonical things
-fltMHz     = choice(truth, compose(float, str.strip, partial(re.compile(r'[ \t]*MHz').sub, "")), const(None))
-sideband_  = { 'U': 'usb', 'L': 'lsb' }
-canon_sb   = compose(sideband_.__getitem__, str.upper)
-canon_pol  = str.lower
-canon_if   = str.lower
-pcal_state = choice(is_none, const("pcaloff"), const("pcalon"))
-canon_pcal = choice(is_none, const("off"), int)
+fltMHz       = choice(truth, compose(float, str.strip, partial(re.compile(r'[ \t]*MHz').sub, "")), const(None))
+sideband_    = { 'U': 'usb', 'L': 'lsb' }
+canon_sb_f   = compose(sideband_.__getitem__, str.upper)
+canon_pol_f  = str.lower
+canon_if_f   = str.lower
+pcal_state_f = choice(is_none, const("pcaloff"), const("pcalon"))
+canon_pcal_f = choice(is_none, const("off"), int)
 # there is a mapping of IF_A/B => input 0 and C/D to 1
-inp_zero   = "AaBb"
-inp_one    = "CcDd"
-if_to_inp  = choice(inp_zero.__contains__, const(0),
-                    choice(inp_one.__contains__, const(1),
-                           Error("No known mapping for IF{0} to RDBE input".format)))
+inp_zero     = "AaBb"
+inp_one      = "CcDd"
+if_to_inp    = choice(inp_zero.__contains__, const(0),
+                      choice(inp_one.__contains__, const(1),
+                             Error("No known mapping for IF{0} to RDBE input".format)))
 
 pfb_split  = compose(enumerate, Filter(truth), Partition(lambda x: x.sb == 'lsb'))
 # group list of channels by their IF and return [(IF, <channels>), ...]
@@ -833,7 +800,7 @@ def fqlist_pfb(setup):
             ich    = lookup_fh(abs(ch_frq))  # look up channel freq in table to find index
             setup.dbes_used.add( (dbe, iif) )
             # Get current pcal state
-            pcal_s.add( pcal_state(ch.pcal) )
+            pcal_s.add( pcal_state_f(ch.pcal) )
             # did we set the LO for this (IF,input)?
             loc    = "lo{ch.canon_if}".format( **locals() )
             if (loc, iif) not in los:
@@ -850,7 +817,7 @@ def fqlist_pfb(setup):
     # for all used dbes enable send again
     enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, get_dbes(setup.dbes_used), list())
     # concatenate all commands - take care of re-ordering the "rdbefXX" commands by XX
-    return [pcal_state(pcal_s.pop())] + los.values() + concat(clrs.values())+sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) + \
+    return [pcal_state_f(pcal_s.pop())] + los.values() + concat(clrs.values())+sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) + \
            rdbe_los.values() + mk_ioch(iochs.iteritems()) + enable_send
 
 # distribute the DDC channels over the RDBE inputs 
@@ -933,7 +900,7 @@ def fqlist_ddc(setup):
     if dual_pol and same_nch_pol and n_chan_tot>4:
         # dual pol > 4 channels, assign each pol to one DBE 'r' => dbe0, 'l' => dbe1
         for pol, ch_list in chans_by_pol:
-            dbe = "dbe0" if canon_pol(pol) == 'r' else "dbe1"
+            dbe = "dbe0" if canon_pol_f(pol) == 'r' else "dbe1"
             # send all channels to this DBE
             for ich, ch in enumerate(ch_list):
                 ch_assign[ ch ] = (dbe, ich)
@@ -952,7 +919,7 @@ def fqlist_ddc(setup):
         iif        = if_to_inp(ch.abcd)
         setup.dbes_used.add((dbe, iif))
         # Get current pcal state
-        pcal_s.add( pcal_state(ch.pcal) )
+        pcal_s.add( pcal_state_f(ch.pcal) )
         # did we set the LO for this (IF,input)?
         loc    = "lo{ch.canon_if}".format( **locals() )
         if (loc, iif) not in los:
@@ -966,7 +933,7 @@ def fqlist_ddc(setup):
         if ch_frq<0:
             ch_frq = -ch_frq
             sb     = invert_sb(sb)
-        sb = canon_sb(sb)
+        sb = canon_sb_f(sb)
         # Append a line describing this channel
         # Note: the last digit is the channel and all DDC channels get
         #       stuffed into IF0. rdbe_tsys.c expects this.
@@ -989,7 +956,7 @@ def fqlist_ddc(setup):
 
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
-    return [pcal_state(pcal_s.pop())] + los.values() + concat(clrs.values()) + sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) +\
+    return [pcal_state_f(pcal_s.pop())] + los.values() + concat(clrs.values()) + sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) +\
            rdbe_los.values() + dcs + mk_xbar(xbar) + mk_vdif(vdif) + enable_send
 
 
@@ -1044,27 +1011,15 @@ class Channel(object):
     def __init__(self, **kwargs):
         reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Channel.__slots__, self)
 
-    @property
-    def canon_pcal(self):
-        return canon_pcal(self.pcal)
-    @property
-    def canon_sb(self):
-        return canon_sb(self.sb)
-    @property
-    def canon_if_sb(self):
-        return canon_sb(self.if_sb)
-    @property
-    def canon_if(self):
-        return canon_if(self.abcd)
-    @property
-    def canon_pol(self):
-        return canon_pol(self.pol)
-    @property
-    def pcal_state(self):
-        return pcal_state(self.pcal)
+    canon_pcal   = property(compose(canon_pcal_f, GetA('pcal')))
+    canon_sb     = property(compose(canon_sb_f, GetA('sb')))
+    canon_if_sb  = property(compose(canon_sb_f, GetA('if_sb')))
+    canon_if     = property(compose(canon_if_f, GetA('abcd')))
+    canon_pol    = property(compose(canon_pol_f, GetA('pol')))
+    pcal_state   = property(compose(pcal_state_f, GetA('pcal')))
 
-    __hash__ = method(GetA('bbc'))
-    __repr__ = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@{0.freq:.2f} [LO={0.lo:.2f}MHz] {0.sb} {0.pol} pcal:{0.pcal}".format)
+    __hash__     = method(GetA('bbc'))
+    __repr__     = method("BBC{0.bbc:02d}: {0.bw:.2f}MHz@{0.freq:.2f} [LO={0.lo:.2f}MHz] {0.sb} {0.pol} pcal:{0.pcal}".format)
 
 
 # input: - ("mode", ("setupXX", { 'BBC': "BBC-def", 'IF': "IF-def", ... ) 
