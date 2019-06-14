@@ -30,7 +30,7 @@ typedef struct _rdbe_ddc_t {
 typedef struct _rdbe_t {
     struct sockaddr_in  addr;        /* The IP:PORT to connect to RDBE server */
     struct sockaddr_in  tsys_mon;    /* The broadcast address where this RDBE sends tsys data to */
-    struct sockaddr_in  1pps_mon;    /* id. for the 1PPS */
+    struct sockaddr_in  pps_mon;     /* id. for the 1PPS */
 
     rdbe_input_t        input[2];    /* each RDBE has two inputs */
     rdbe_channel_t      channel[32]; /* 32 channels is overkill */
