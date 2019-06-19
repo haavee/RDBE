@@ -6,7 +6,7 @@ ST_VERSION = $(VERSION).$(SUBLEVEL).$(PATCHLEVEL)
 export VERSION SUBLEVEL PATCHLEVEL ST_VERSION
 #
 #LIB_DIR =
-LIB_DIR = stlib
+LIB_DIR = stlib socklib
 #
 #EXEC_DIR =
 EXEC_DIR = antcn cheks stalloc sterp stqkr inject_snap autoftp rdbe_tsys antrcv
