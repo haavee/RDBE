@@ -1,20 +1,17 @@
-* 3mm.rx - 3mm receiver parameter definition
-*---------------------------------------------
-* Oct 22, 2002   by AK
+* x.rx - x band receiver parameter definition
 *
-*---------------------------------------------
 * first line: LO values and ranges, format:
 *  type   frequencies
 * if type is range, the two values: lower and upper frequencies
 * if type is fixed, then one or two fixed value
 * frequencies in MHz
 *
-range 84000 95500
+fixed 8080 8580.1
 *
 * 2nd line: creation date
 * format:  yyyy ddd or yyyy mm dd (0 is valid for all for intial set-up)
 *
-2013 05 15
+2002 07 18
 *
 * 3rd line: FWHM beamwidthm format:
 *   model value
@@ -23,19 +20,17 @@ range 84000 95500
 *                      value is 1.0 if omitted
 * if type is constant, then fwhm=value (degrees)
 *
-* for Effelsberg secondary focus, we use theta = 1.15 *lambda/d
-*
-frequency 1.00
+frequency 1.0
 *
 * 4th line polarizations available
 *
 * one of both of lcp and rcp
 *
-rcp lcp
+rcp
 *
 * 5th line: DPFU (degrees/Jansky) for polarizations in previous line in order
 *
-0.14 0.14
+  0.00120
 *
 * 6th line: gain curve (only one) for ALL polarizations in 4th line
 * TYPE FORM COEFFICENTS ...
@@ -46,9 +41,7 @@ rcp lcp
 *
 * maximum coefficents 10
 *
-*ELEV POLY 0.63495  2.3001E-2  -3.6231E-4
-* Oct 15, 2008, gain curve update, by UB
-ELEV POLY 0.5190 -0.0382429  0.00510852 -0.000162218 1.95938e-06 -8.2009e-09  
+ELEV POLY 1.0
 *
 * 7th and following lines: tcal versus frequency
 *     Format: POL FREQ TCAL
@@ -60,25 +53,26 @@ ELEV POLY 0.5190 -0.0382429  0.00510852 -0.000162218 1.95938e-06 -8.2009e-09
 *     MAXIMUM ENTRIES 100, group by polarization
 *                          then sorted by increasing freq
 *
-rcp 84000  16.7
-rcp 88000  16.7
-rcp 95500  16.7
-lcp 84000  13.0
-lcp 88000  13.0
-lcp 95500  13.0
-end_tcal_table                                                 
-*                                              
-* Trec: receiver temperature
+rcp 8080.0   9.8 
 *
-120.0               120.0              
+*tcal table ends with end_tcal_table record
 *
-* Spill over table       
-* 9th and following lines: Spillover versus frequency
-*     Format: Elevation Tspill
-*     where:
-*            POL    polarization rcp or lcp
-*            FREQ   frequency (MHz)
-*            TCAL   degrees K
-*     ends with a line containing end_spillover_table
-*     MAXIMUM ENTRIES 20
+end_tcal_table
+*
+* Trec - receiver temperature, degrees K
+*
+* if value is zero, no opacity corrections are used
+*
+ 0.0
+*
+* Spillover table
+*
+* format:
+* elevation temperature
+* where:
+*  elevation is angular degrees above horizon
+*  temperature is Kelvin degrees of spillover noise
+*
+*spillover table ends with end_spillover_table record
+*
 end_spillover_table
