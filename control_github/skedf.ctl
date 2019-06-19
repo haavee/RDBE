@@ -31,7 +31,7 @@ $snap
 * not specified, the default is null, i.e. use the local directory.
 * This is used by drudg.
 * Example: 
-/usr2/sched/
+*/usr2/sched/
 *
 $proc
 * Enter the path name for writing procedure (.prc) files. If not specified, 
@@ -92,7 +92,7 @@ $print
 * the default is to use "lpr" to print the temporary file.
 * Examples:
 *labels <script name for label printing>
-labels /usr2/control/printdymo.pl
+*labels print2dymo
 *  This is to print to the dymo printer.
 *  Script "print2dymo" must be
 *    1.) In your path, e.g. in /usr2/oper/bin,
@@ -104,8 +104,8 @@ labels /usr2/control/printdymo.pl
 * will not attempt to print tape labels. Recognized names are postscript,
 * epson, epson24, laser+barcode_cartridge.
 * Examples:
-label_printer dymo
-*label_printer postscript
+*label_printer dymo
+label_printer postscript
 *label_printer laser+barcode_cartridge
 *label_printer epson
 *label_printer epson24
@@ -128,8 +128,7 @@ label_printer dymo
 * label_size <ht> <wid> <rows> <cols> <top> <left>
 * Examples:
 *
-label_size  1.417  3.5    1     1    11.0   0.0   Dymo
-*label_size  1.    4.0     1     1     0.0   0.0    Dymo Larger Printing
+label_size  1.    4.0     1     1     0.0   0.0    Dymo Larger Printing
 *label_size  1.    3.5     1     1     0.0   0.0    Dymo Smaller Printing
 *label_size  1.0   2.625  10     3     0.5   0.3125 Avery 5160
 *label_size  1.333 4.0     7     2     0.5   0.25   Avery 5162
@@ -145,10 +144,10 @@ $misc
 *     relative pathnames may work if you are careful about the working
 *     directory of the Mark5A program.
 *EXAMPLE
-disk2file_Dir /data
+* disk2file_Dir /r1234/data
 * Sets up AutoFTP
 *EXAMPLE
-AutoFTP ON eff-mark5c-1
+* AutoFTP ON arbitrary_string_with_out_spaces 
 *
 * Epoch:
 * Enter the epoch for drudg to use on the SOURCE commands in SNAP files.
@@ -214,7 +213,7 @@ epoch 2000
 *dbbc: have to change if using hi-band
   equipment VLBA5  Mark5B  none
 *Force!
-  equipment_override 
+* equipment_override 
 *--------------------------------------------------------------
 * TPI daemon setup
 *   prompt? 
