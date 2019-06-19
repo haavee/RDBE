@@ -1,4 +1,0 @@
-      strcpy(stm_addr->rdbe0_if0_iflet,"X"); //mark dbe0 ifo,if1 as unconnected 
-      strcpy(stm_addr->rdbe0_if1_iflet,"X"); 
-      strcpy(stm_addr->rdbe1_if0_iflet,"X"); //mark dbe0 ifo,if1 as unconnected 
-      strcpy(stm_addr->rdbe1_if1_iflet,"X"); 
