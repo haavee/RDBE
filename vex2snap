@@ -707,7 +707,7 @@ mk_vex_lut = lambda sect, defname, key:compose(DD("VEX lut[{0}.{1}".format(sect,
                                                Call('getall', key), GetN(defname), GetN(sect))
 
 # shorthands for converting vex file values to canonical things
-fltMHz       = choice(truth, compose(float, str.strip, partial(re.compile(r'[ \t]*MHz').sub, "")), const(None))
+fltMHz       = if_not_none(compose(float, str.strip, partial(re.compile(r'[ \t]*MHz').sub, "")))
 sideband_    = { 'U': 'usb', 'L': 'lsb' }
 canon_sb_f   = compose(sideband_.__getitem__, str.upper)
 canon_pol_f  = str.lower
@@ -1050,7 +1050,9 @@ def resolve_mode(vexobj):
         for fqchan in vexobj['FREQ'][setup['FREQ']].getall('chan_def'):
             (_, ch_freq, sb, bw, ch_ref, bbc_ref, nix) = fqchan
             (bbc_num, if_ref)                     = bbc_lut[ bbc_ref ]
-            (ABCD, if_pol, if_lo, if_sb, if_pcal) = if_lut[ if_ref ]
+            # the pcal is optional in some vex files?
+            if_data                               = if_lut[ if_ref ]
+            (ABCD, if_pol, if_lo, if_sb, if_pcal) = if_data + ([] if len(if_data)==5 else [None])
             nSetup.channels.append( D(Channel(bbc=int(bbc_num), abcd=ABCD, pol=if_pol, lo=fltMHz(if_lo), ch_ref=ch_ref,
                                               sb=sb, if_sb=if_sb, pcal=fltMHz(if_pcal), bw=int(fltMHz(bw)), freq=fltMHz(ch_freq))) )
 
@@ -1182,7 +1184,7 @@ def process_vex(vexfile):
         # we can extract the set of all dbe's ever used in all setups
         # so we can properly add initialization commands for all used dbe's to
         # the appropriate procedures. Feel free to add other per-dbe stuff here
-        procecures["sched_initi"].append( "rdbe_init" )
+        procedures["sched_initi"].append( "rdbe_init" )
         for dbe in get_all_dbes(setups):
             for p, lst in [("sched_initi", ["rdbe_cmd={dbe},3,dbe_data_send=on;".format,
                                             "rdbe_time={dbe},3".format, 
