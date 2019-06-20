@@ -324,7 +324,7 @@ class Mark6(Recorder):
         # but buffer sizes &cet can already be set
         initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
                               will be set in the setup, it is firmware dependent""") )
-        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:10M:32\nrecord=mk6:1") )
+        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:10M:32\nrecord=mk6:1\nrecord=nthread:2:2") )
         initi.append( mk5("set_disks={0}".format("mark6" if disks is None else disks)) )
         self.procedure_lst = [initi]
 
@@ -370,7 +370,7 @@ class FlexBuff(Recorder):
         # but buffer sizes &cet can already be set
         initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
                               will be set in the setup, it is firmware dependent""") )
-        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:256M:4\nrecord=mk6:0") )
+        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:256M:4\nrecord=mk6:0\nrecord=nthread:2:2") )
         initi.append( mk5("set_disks={0}".format("flexbuff" if disks is None else disks)) )
         self.procedure_lst = [initi]
 
