@@ -32,6 +32,9 @@
 /* For malloc, free. */
 #include <stdlib.h>
 
+/* For strlen */
+#include <string.h>
+
 #include "../../fs/include/params.h"
 #include "../../fs/include/fs_types.h"
 #include "../../fs/include/fscom.h"
@@ -59,13 +62,11 @@ int
 main(int argc, char **argv)
 {
   char *input;
-  char *previous_input;
   int length;
 
   setup_ids();
   sig_ignore();
 
-  previous_input = NULL;
 
     input = argv[1];
 
