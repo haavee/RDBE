@@ -45,10 +45,12 @@ cdp     cdp or met3, use cdp if you don't have either
 *DBBC PFB version
  v12    v12 only
 *DBBC number of conditioning modules
-  4     1-4 (a,...d)
+  1 1 1 1
 *DBBC IF power conversion factors, one for each module specified above, no trailing comments or extra fields
   15000 15000 15000 15000
 *Mark5B clock rate (MHz): "nominal" is 32 for Mark5, VLBA5, DBBC, 0 otherwise, except
 *   "nominal" is not allow for rack=none
 * a clock rate value of "none" will suppress clock_set command in FMSET
    32   one of: none, nominal, 2, 4, 8, 16, 32, 64
+*FiLa10G input select, one of: vsi1, vsi2, vsi1-2, vsi1-2-3-4, gps, tvg
+vsi1
