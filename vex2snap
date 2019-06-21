@@ -1250,7 +1250,7 @@ def process_vex(vexfile):
                 for cmd in lst:
                     procedures[p].append( cmd(**locals()) )
 
-        procedures["sched_initi"].append( "!+1s\ngetgps\n!+1s\nready_disk" )
+        procedures["sched_initi"].append( "!+1s\n!+1s\nready_disk" )
         procedures[preob].append( "op_stream=start" )
 
         # tsys is collected per RDBE input
