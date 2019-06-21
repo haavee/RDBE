@@ -1,10 +1,10 @@
 "--------------------------------------
-define  initi         19171224923x
+define  initi         19172203122x
 "welcome to the rdbe field system #1 at AR
 xlog=on
 xdisp=on
-rdbe_initi
-mk5c_initi
+"rdbe_initi
+"mk5c_initi
 enddef
 define  ifd2          00000000000x
 rdbe_cmd=dbe0,5,dbe_alc=1:$:off
@@ -21,7 +21,7 @@ rdbe_cmd=dbe0,5,dbe_ddc_quantize=2:$
 rdbe_cmd=dbe0,5,dbe_ddc_quantize=3:$
 enddef
 "--------------------------------------
-define  rdbe_initi    19171224923x
+define  rdbe_initi    00000000000x
 rdbe_cmd=dbe0,3,dbe_data_send=off
 "rdbe_cmd=dbe0,3,dbe_dot_set=
 "rdbe_sync=dbe0
@@ -51,7 +51,7 @@ rdbe_cmd=dbe1,3,dbe_quantize?
 rdbe_cmd=dbe1,10,dbe_status?
 !+2s
 enddef
-define  mk5c_initi    19171224927x
+define  mk5c_initi    00000000000x
 "mk5relink
 "!+2s
 mk5=personality=mark5c:bank;
