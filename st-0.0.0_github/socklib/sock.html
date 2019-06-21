@@ -1,0 +1,206 @@
+<HTML>
+<HEAD>
+<TITLE>Jeff's socket library</TITLE>
+</HEAD>
+
+<img src="HLINE.gif" width=100%>
+
+<p>
+<center><h1>Jeff's Socket Library</h1></center>
+</p>
+
+<p>
+This document describes a C layer to berkeley sockets which
+make socket communication easy for C programmers. It runs on linux,
+solaris, and vxworks. There is also an extension to tcl/tk.
+</p>
+<p>
+The idea is that messages can be sent anonymously to a name, I'm calling a 
+mailbox.  A mailbox is a name associated with an internet name and a 
+port number.  This mapping is defined by a file I'm calling mailboxdefs.
+</p>
+<p>
+It illustrate the library's features, lets start with an example. There is an 
+application called sock which accepts ascii messages from standard input 
+and sends them to a mailbox.  
+</p>
+<p>
+</p>
+First unpack the tarball and edit the Makefile to configure your own OS and
+make the software.
+<p>
+Open two windows with a shell. 
+</p>
+
+<br>in the first window:
+<br>./sock -d TEST1 TEST2
+<br>
+<br>in the second window:
+<br>
+<br>./sock -d TEST2 TEST1
+
+<p>
+Whatever you type in the first window appears in the second and whatever
+you type in the second appears in the first. Try killing one window
+and restarting. It should work smoothly.
+</p>
+
+<img src="HLINE.gif" width=100%>
+<h1>EXAMPLE:</h1>
+<p>
+Doing this in C is made easy with the library. To write the 
+above applications the following calls are made:
+</p>
+
+<pre>
+ sock_bind("TEST1");
+ int handle = sock_connect("TEST2");
+
+  while(1) {
+    sel = sock_sel(message, &len, NULL, 0, NULL, 1);
+    if( sel == 0 ) {
+      fgets( message, stdin ); 
+      sock_send( handle, message);
+    } else {
+      printf("%s, %s\n", sock_name( last_msg()), message );
+    }
+  }
+
+</pre>
+<img src="HLINE.gif" width=100%>
+<h1>THE LIBRARY:</h1>
+
+<ul>
+<li>
+sock_bind(name)  - binds this process to name as defined in mailboxdefs.
+This can also be the value, ANONYMOUS, for those programs who do not
+independently accept connections.
+</li>
+<li>
+sock_connect(name)  - returns an integer that is passed to sock_send.
+This is a handle (a 4 byte pointer) that hold the structure for that
+mailbox. This makes no network connections. Multiple calls to this
+procedure returns the same pointer.
+</li>
+<li>
+sock_send( s, message ) - sends message to mailbox associated with s
+from sock_connect. message is a char * nullterminated string.
+</li>
+<li>
+sock_write( s, data, n ) - sends data to mailbox associated with s
+from sock_connect
+</li>
+<li>
+sock_sel(message, l, p, n, tim, rd) - blocks on connections and messages.
+Use this instead of select.
+<ul><li>
+message is the buffer where a socket message will be put.
+</li><li> l is the length of message (returned);
+</li><li> p is an array of file descriptors that sock_sel will select on
+</li><li>        n is the length of p;
+</li><li>        tim is a timeout in seconds
+</li><li>        rd true means that sock_sel will read stdin
+</li><li>        sock_sel returns:
+<ul>
+<li> -1 if a timeout. </li>
+<li>          -2 if an error </li>
+<li>          -3 if interrupted by a signal </li>
+<li>          0 if standard in is ready for input </li>
+<li>          or the file descriptor from 'p' that is ready. </li>
+<li>          or the file descriptor of the socket that filled in message. </li>
+</ul>
+</ul>
+
+<li> sock_close(name) - close opened connection - if NULL close all </li>
+<li>      sock_name(last_msg()) - returns a status string pointing to the mbname </li>
+<li>      sock_find(name) - returns handle for name </li>
+<li>      sock_only(handle, message, tim) - blocks only on handle or timeout </li>
+<li>      sock_poll(handle, message, tim, plen) - polls one socket and returns len </li>
+<li>      sock_fd(handle) - returns a fd associated with handle  </li>
+<li>      sock_intr(flag) - sock_sel will return when select is interrupted if flag
+        is true. </li>
+<li>      sock_bufct(n) - set out-of-sync size normally 4096 </li>
+
+
+<li>      sock_openclose( open, close ) - anytime a file descriptor is 
+opened (accepted) or closed in the socket library, these routines are called.
+This offers support for applications that cant block in sock_sel.
+<li>      sock_seterror(err) - sets the procedure called when an error
+occurs in the socket library. Normally this prints to stderr. </li>
+</ul>
+
+<img src="HLINE.gif" width=100%>
+<h1>Technical Description</h1>
+
+<p>
+The protocol for all messages is 4 bytes (network byte 
+order) of the length of the messages. Then, that many bytes.
+</p><p>
+When a destination mailbox receives a connection, the name is first 
+received. 4 bytes for the length and then the string with the name.
+Then the message is received, 4 bytes for the length and then the
+data. If the value of the 4 bytes exceeds the "buffercount" the connection 
+is closed and the data is dropped as garbage. The default buffercount is 8192
+and can be set by the sock_bufct() routine. Make sure sockbufct is the
+samesize as the incoming message buffer to avoid memory overruns.
+</p><p>
+The socket library keeps a linked list of whats connected.
+When it tries to send a message to a connection and the connection
+fails, it tries again and then returns an error. It knows whats connected 
+and whats not and handles the reconnects automatically.
+</p>
+
+<p>
+The mailboxdefs file is a simple ascii file that defines the mapping from
+a name to an internet name and port number. These are arbitrary. Look
+in your local /etc/services file and choose port numbers wisely.
+For example:
+</p>
+
+<pre>
+4001  locura     OBSERVER
+4002  testwapp     MONPOS
+4003  testwapp     AOFTM
+4004  testwapp     CBR
+4005  testwapp     WAPPCON
+4006  testwapp     PSPM
+4007  testwapp     WAPPSNAP
+4008  testwapp     WAPPTAPE
+4010  testwapp     RADARIFACE
+4009  locura       OPTICAL
+3011  observer     SHAREDMEMORY
+3013  locura       MONITOR
+3014  locura       TEST1
+3015  linux3       SYSMON
+3016  locura       TESTENET
+3017  testwapp     COMPRESSOR
+3018  locura       WINDTEST
+3019  locura       TEST2
+</pre>
+
+<p>
+The mailboxdefs file is specified by the MAILBOXDEFS environment.
+Set this to point at any file you like.
+<br>MAILBOXDEFS=/etc/mailboxdefs
+<br>export MAILBOXDEFS
+</p>
+
+<img src="HLINE.gif" width=100%>
+<h1> VxWorks </h1>
+The interface is similar to the unix version. Look at the comments in 
+sockvxlib.c to see  the changes.
+
+<img src="HLINE.gif" width=100%>
+<h1> TCL/TK hooks </h1>
+There is a set of procedures that will make easy the inclusion of
+the socket library into a tk or wish executable. socktk.c
+</p>
+
+<img src="HLINE.gif" width=100%>
+<p>
+This code has been used extensively at the 12 meter telescope and now
+at the Arecibo Observatory.  Give it a try. You might like it.
+</p>
+
+<br> Jeff
+

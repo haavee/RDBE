@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 # 
-# vex2snap -- convert future scans(*) from VEX file to .snp, .prc file, replacing DRUDG
+# vex2snap -- convert from VEX file to .snp, .prc file, replacing DRUDG
 #             for RDBE PFB/DDC + Mark5C/Mark6 [running jive5ab] combo
-#
-#             (*) default behaviour, can be overriden, see below
-#
 #
 #   Usage:  vex2snap [options] --station XX [vex1 [vex2 [...]]
 #           see 'vex2snap --help' for [options]
@@ -14,28 +11,19 @@
 #            --usage            show this built-in help
 #            -v, --version      print version and exit succesfully
 #            --station          Two-letter station code to generate .prc/.snp for
-#
 #            --dest             set destination path for output files
 #                               [default: /usr2/sched]
-#
 #            --recorder TYPE[:DISKS] Override scheduled recorder from VEX file
 #                               By default vex2snap will use the recorder defined
 #                               in the VEX file for the selected station. Override
 #                               by using this option.
-#                               TYPE  = Mark5C | Mark6 | FlexBuff |none
-#                               DISKS = (only if TYPE=Mark6 | FlexBuff):
+#                               TYPE  = Mark5C | Mark6 | none
+#                               DISKS = (only if TYPE=Mark6)
 #                                       argument to "set_disks=", specify on which  
-#                                       disks or module to record the experiment.
-#                                       Default for TYPE=Mark6     "mark6",
-#                                                   TYPE=FlexBuff  "flexbuff"
-#                                        i.e. all presently mounted disks on the
-#                                        indicated harware.
-#                               To use a Mark6 as FlexBuff use this:
-#                                  --recorder FlexBuff:mark6
-#                               which will record in FlexBuff format on Mark6 disks
-#
+#                                       disks or module to record the experiment
+#                                       [default for Mark6: "mark6" -
+#                                        i.e. all presently mounted disks]
 #            --force            overwrite output files [default: don't!]
-#
 #            --ignore-utc       do not forget scans from the past
 #                               [default: only process scheduled scans
 #                               that are still observable - i.e. in the future]
@@ -313,7 +301,7 @@ class Mark5C(Recorder):
     record_on  = const_lines("disk_pos\ndisk_record=on\ndisk_record\ndata_valid=on")
     record_off = const_lines("data_valid=off\ndisk_record=off\ndisk_pos")
 
-##############   The Mark6 recorder - record in Mark6 format
+##############   The Mark6 recorder
 class Mark6(Recorder):
     __repr__ = const("Mark6")
 
@@ -324,54 +312,8 @@ class Mark6(Recorder):
         # but buffer sizes &cet can already be set
         initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
                               will be set in the setup, it is firmware dependent""") )
-        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:10M:32\nrecord=mk6:1\nrecord=nthread:2:2") )
+        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:256M:4") )
         initi.append( mk5("set_disks={0}".format("mark6" if disks is None else disks)) )
-        self.procedure_lst = [initi]
-
-    def procedures(self):
-        return Recorder.procedures(self) + self.procedure_lst
-
-    # depending on Setup's props, generate the appropriate commands to add to
-    # one or more procedures
-    def setup_procedures(self, setup):
-        Assert(setup.firmware in ["PFB", "DDC4", "DDC8"],
-               "The setup's firmware {0} is not supported by the recorder".format(setup.firmware))
-        # we need to append to the setup's procedure at the very least
-        setup_p = Procedure(setup.setup)
-        if setup.firmware == "PFB":
-            # pfb outputs Mark5B as 2x5008 byte frames w/ broken sequence number
-            # (32 bits in 64 bit word and at the wrong half at that)
-            # There is a compile-time option in jive5ab to decode these sequence numbers
-            # (FILA=1) but then we need to swap executables ....
-            # Maybe I'll add an "udps32" net_protocol to support this format dynamically
-            setup_p.append( mk5("net_protocol=udpsnor\nmtu=5100") )
-            # need to generate the mode=
-            setup_p.append( mk5("mode=MARK5B-{0.datarate}-{0.nChannel}-2".format(setup)) )
-        else:
-            # DDC mode outputs 8224 byte VDIF w/o sequence number?
-            setup_p.append( mk5("net_protocol=pudp\nmtu=9000") )
-            setup_p.append( mk5("mode=VDIF_8224-{0.datarate}-{0.nChannel}-2".format(setup)) )
-        return [setup_p]
-
-    # what needs to be done on ready_disk at start of experiment
-    # and what to do to switch recording on/off
-    ready_disk = const(mk5("set_disks?"))
-    record_on  = const_lines("disk_record=on\ndisk_record\ndata_valid=on")
-    record_off = const_lines("data_valid=off\ndisk_record=off")
-
-##############   The FlexBuff recorder - record in FlexBuff format
-class FlexBuff(Recorder):
-    __repr__ = const("FlexBuff")
-
-    def __init__(self, disks=None):
-        initi = Procedure("sched_initi")
-        # flexbuff/mark6 recording RDBE must be done on port 625 apparently
-        # net_protocol pudp/udps will be set depending on setup
-        # but buffer sizes &cet can already be set
-        initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
-                              will be set in the setup, it is firmware dependent""") )
-        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:256M:4\nrecord=mk6:0\nrecord=nthread:2:2") )
-        initi.append( mk5("set_disks={0}".format("flexbuff" if disks is None else disks)) )
         self.procedure_lst = [initi]
 
     def procedures(self):
@@ -426,7 +368,7 @@ class PrintUsage(argparse.Action):
         sys.exit( usage() )
 
 # an action which (attempts to) map a recorder type string into an actual type
-recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6, 'flexbuff':FlexBuff, 'none':RecorderNone}
+recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6, 'none':RecorderNone}
 get_recorder_type = compose(choice(recorder_mapping.__contains__, recorder_mapping.__getitem__,
                             Error("Unknown recorder type {0}".format)), str.lower)
 def recorder_type(rec):

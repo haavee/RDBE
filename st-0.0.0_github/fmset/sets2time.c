@@ -7,6 +7,7 @@
 #include <sys/types.h>   /* data type definition header file */
 #include <stdlib.h>
 
+#include "/usr2/fs/include/params.h"
 #include "/usr2/fs/include/fs_types.h"
 
 #include "/usr2/fs/rclco/rcl/rcl_def.h"

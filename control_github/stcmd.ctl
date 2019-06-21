@@ -34,6 +34,7 @@ rdbe_fchk    str 0585 01 FFFFFFFFFFFF
 essr         str 0586 01 FFFFFFFFFFFF
 rx           str 1601 01 FFFFFFFFFFFF
 lo           str 1402 01 FFFFFFFFFFFF
+aosend       str 1403 01 FFFFFFFFFFFF
 phasecal     str 3001 01 FFFFFFFFFFFF
 getgps       str 9101 01 FFFFFFFFFFFF
 fmout-gps    qkr 0302 01 FFFFFFFFFFFF
