@@ -1,15 +1,19 @@
 "--------------------------------------
-define  initi         19172205326x
+define  initi         19172231637x
 "welcome to the rdbe field system #1 at AR
 xlog=on
 xdisp=on
+" don't call rdbe_initi (full procedure)
+" but do call rdbe_init (triggers rdbe 
+" module initialization)
+rdbe_init
 "rdbe_initi
 "mk5c_initi
 enddef
 define  ifd2          00000000000x
 rdbe_cmd=dbe0,5,dbe_alc=1:$:off
 enddef
-define  ifread        00000000000x
+define  ifread        19172231730x
 rdbe_cmd=dbe0,5,dbe_alc?
 rdbe_adc=dbe0,5,0
 rdbe_adc=dbe0,5,1
@@ -71,17 +75,17 @@ define  sched_end   01000000000
 "mk5_status
 "- - - - end of schedule - - - -
 enddef
-define  midob         00000000000x
+define  midob         19172231731x
 onsource
 wx
 rdbe_cmd=dbe0,2,dbe_dot?
 rdbe_cmd=dbe0,2,dbe_data_send?
 rdbe_cmd=dbe0,2,dbe_status?
 mk5_status;
-mk5=pointers?;
+"mk5=pointers?;
 op_stream=start
 enddef
-define  postob        00000000000x
+define  postob        19172231746x
 !+1s
 mk5_status;
 collect@
@@ -95,11 +99,11 @@ rdbe_adc=dbe0,3,1
 enddef
 define  midtp         00000000000
 enddef
-define  checkmk5      00000000000
+define  checkmk5      19172231753
 mk5=rtime?;
 !+1s
-"mk5=scan_check?;
-mk5=dir_info?;
+mk5=scan_check?;
+#mk5=dir_info?;
 enddef
 define  caltsys       00000000000x
 caltemp=formvc,formif
