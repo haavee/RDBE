@@ -1,5 +1,5 @@
 "--------------------------------------
-define  initi         19172203122x
+define  initi         19172205326x
 "welcome to the rdbe field system #1 at AR
 xlog=on
 xdisp=on
