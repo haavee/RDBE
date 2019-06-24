@@ -1,7 +1,7 @@
 #
 all: ../bin/stqkr ../bin/prog_rdbe_alc_adj
 CFLAGS= -g
-LIBES = ../stlib/stlib.a  \
+LIBES = ../stlib/stlib.a ../socklib/socklib.a \
   ../../fs/port/port.a ../../fs/poclb/poclb.a \
   ../../fs/clib/clib.a ../../fs/rtelb/rtelb.a /usr/lib/i386-linux-gnu/libm.a
 #
@@ -10,7 +10,7 @@ stqkr.o getgps.o effcal.o effpcal.o effrx.o effwx.o efflo.o \
   p_rdbe_alc.o rdbe_cmd.o rdbe_adc.o rdbe_time.o \
   rdbe_fq.o rdbe_tsys.o rdbefclr.o rdbe_if.o rdbe_sync.o rdbe_talk.o \
   rdbe_person.o rdbe_dc_cfg.o rdbe_send.o scmds.o \
-  rdbe_fchk.o rdbe_init.o essr.o
+  rdbe_fchk.o rdbe_init.o essr.o aosend.o
 #
 ../bin/stqkr: $(OBJECTS1)
 	cc  -o ../bin/stqkr $(OBJECTS1) $(LIBES) -lm

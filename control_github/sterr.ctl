@@ -22,3 +22,12 @@ rdbe:T450 4x4 switch not present
 ""
 RD -546
 rdbe:T450 4x4 switch timeout
+""
+AO -600
+aosend:internal error task not handled by implementation
+""
+AO -601
+aolo:failed to set LO
+""
+AO -602
+aosend:failed to send

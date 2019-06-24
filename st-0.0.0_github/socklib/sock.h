@@ -1,3 +1,4 @@
+#include <netinet/in.h>
 
 struct BOUND {
   int bind_fd;
