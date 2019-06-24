@@ -112,6 +112,7 @@ GetA        = attrgetter
 Call        = methodcaller
 DDict       = collections.defaultdict
 Apply       = lambda f, *args, **kwargs: (lambda x: f(x, *args, **kwargs))
+MBytes      = compose(str, int, partial(mul, 1024*1024)) # number of megabytes 
 # head, tail on lists might be useful!
 head        = GetN(0)
 tail        = GetN(slice(1,None))
@@ -209,6 +210,8 @@ class VEXTime(object):
         # by using the .seconds property we get the sign handled just fine
         return sec2VEXTime(self.seconds + other.seconds )
 
+    __radd__ = __add__
+
     @property
     def seconds(self):
         # depending on the type of the sign attribute's value convert to either +1 or -1
@@ -246,6 +249,9 @@ class Procedure(object):
 
     def append(self, line):
         self.lines.extend(lineify(line))
+        return self
+    def prepend(self, line):
+        self.lines = lineify(line)+self.lines
         return self
 
     __hash__  = compose(hash, GetA('name'))
@@ -304,7 +310,7 @@ class Mark5C(Recorder):
         else:
             # DDC mode outputs VDIF
             setup_p.append( mk5("packet=36:0:8224:0:0;") )
-            setup_p.append( mk5("mode=VDIF_8224-{0.datarate}-{0.nChannel}-2".format(setup)) )
+            setup_p.append( mk5("mode=VDIF_5000-{0.datarate}-{0.nChannel}-2".format(setup)) )
         return [setup_p]
 
     # what needs to be done on ready_disk at start of experiment
@@ -316,6 +322,9 @@ class Mark5C(Recorder):
 ##############   The Mark6 recorder - record in Mark6 format
 class Mark6(Recorder):
     __repr__ = const("Mark6")
+    sockbuf  = MBytes(32)
+    workbuf  = MBytes(10)
+    nbuf     = 32
 
     def __init__(self, disks=None):
         initi = Procedure("sched_initi")
@@ -324,7 +333,7 @@ class Mark6(Recorder):
         # but buffer sizes &cet can already be set
         initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
                               will be set in the setup, it is firmware dependent""") )
-        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:10M:32\nrecord=mk6:1\nrecord=nthread:2:2") )
+        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:{0.sockbuf}:{0.workbuf}:{0.nbuf}\nrecord=mk6:1\nrecord=nthread:2:2".format(self)) )
         initi.append( mk5("set_disks={0}".format("mark6" if disks is None else disks)) )
         self.procedure_lst = [initi]
 
@@ -350,7 +359,7 @@ class Mark6(Recorder):
         else:
             # DDC mode outputs 8224 byte VDIF w/o sequence number?
             setup_p.append( mk5("net_protocol=pudp\nmtu=9000") )
-            setup_p.append( mk5("mode=VDIF_8224-{0.datarate}-{0.nChannel}-2".format(setup)) )
+            setup_p.append( mk5("mode=VDIF_5000-{0.datarate}-{0.nChannel}-2".format(setup)) )
         return [setup_p]
 
     # what needs to be done on ready_disk at start of experiment
@@ -362,6 +371,9 @@ class Mark6(Recorder):
 ##############   The FlexBuff recorder - record in FlexBuff format
 class FlexBuff(Recorder):
     __repr__ = const("FlexBuff")
+    sockbuf  = MBytes(32)
+    workbuf  = MBytes(256)
+    nbuf     = 4
 
     def __init__(self, disks=None):
         initi = Procedure("sched_initi")
@@ -370,7 +382,7 @@ class FlexBuff(Recorder):
         # but buffer sizes &cet can already be set
         initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
                               will be set in the setup, it is firmware dependent""") )
-        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:32M:256M:4\nrecord=mk6:0\nrecord=nthread:2:2") )
+        initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:{0.sockbuf}:{0.workbuf}:{0.nbuf}\nrecord=mk6:0\nrecord=nthread:2:2".format(self)) )
         initi.append( mk5("set_disks={0}".format("flexbuff" if disks is None else disks)) )
         self.procedure_lst = [initi]
 
@@ -396,7 +408,7 @@ class FlexBuff(Recorder):
         else:
             # DDC mode outputs 8224 byte VDIF w/o sequence number?
             setup_p.append( mk5("net_protocol=pudp\nmtu=9000") )
-            setup_p.append( mk5("mode=VDIF_8224-{0.datarate}-{0.nChannel}-2".format(setup)) )
+            setup_p.append( mk5("mode=VDIF_5000-{0.datarate}-{0.nChannel}-2".format(setup)) )
         return [setup_p]
 
     # what needs to be done on ready_disk at start of experiment
@@ -459,9 +471,10 @@ def shift(shift):
         print("Shifting all UCT times by ",vext)
         # given any vex object, always return a function which
         # just adds the number of seconds requested
-        return const(partial(add, vext.sign*vext.seconds))
+        return const(partial(add, int(vext.sign*vext.seconds)))
     else:
         # Move to specific day (today, or specific year+doy)
+        print("Shifting schedule to ",vext)
         # so, given a vex object, we extract the nominal start time and compute the shift wrt to that one
         def compute_shift(vexf):
             nominal_start = NominalStart(vexf)
@@ -469,9 +482,8 @@ def shift(shift):
             # each day adds 23h56m4s 
             offset = (365 * (vext.y - nominal_start.y) + vext.d - nominal_start.d) * siderealday.seconds + \
                      (vext.h - nominal_start.h) * 3600 + (vext.m - nominal_start.m) * 60 + (vext.s - nominal_start.s)
-            return partial(add, offset)
+            return partial(add, int(offset))
         return compute_shift
-
 
 parsert = argparse.ArgumentParser(description="Transform VEX files to .snp/.prc", add_help=False)
 parsert.add_argument('-h',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
@@ -489,7 +501,7 @@ parsert.add_argument('--recorder', dest='recorder', type=recorder_type, default=
                      help="The recorder type (Mark5C, Mark6) to use")
 parsert.add_argument('--ignore-utc', dest="utc_limit", default=utcsec_now, action="store_const", const=0,
                      help="Ignore current UTC time - i.e. just process all scans even when they cannot be observed anymore")
-parsert.add_argument('--shift', dest='utc_shift', type=shift, default=const(const(identity)),
+parsert.add_argument('--shift', dest='utc_shift', type=shift, default=const(identity),
                      help="Shift all UTC time stamps in the schedule (see --help for details)")
 parsert.add_argument("vexfiles", nargs='*', help="One or more vexfiles to process")
 
@@ -612,13 +624,13 @@ sec2VEXTime   = lambda seconds: decompose_seconds(SetAttr, vtactions)(seconds, V
 intSec        = compose(int, str.strip, partial(re.sub, r"s(ec)?", r""))
 
 class Scan(object):
-    __slots__ = ['mode', 'label', 'nominal_start', 'source', 'offset', 'duration']
-    __xform__ = {'offset':intSec, 'duration':intSec, 'nominal_start':mk_vextime}
+    __slots__ = ['mode', 'label', 'nominal_start', 'source', 'offset', 'duration', 'shift']
+    __xform__ = {'offset':intSec, 'duration':intSec}
 
     # assume we're constructed from a vexobject describing an entry in "$SCHED;"
     def __init__(self, **obj):
         reduce(lambda a, k: setattr(a, k, Scan.__xform__.get(k, identity)(obj.get(k, None))) or a, Scan.__slots__, self)
-        Assert(self.duration>self.offset, "Attempt to observe scan where data-good > scan duration")
+        Assert(self.duration>self.offset, "Attempt to observe scan where data-good > scan duration [{0}]".format(self))
 
     # .start, .end                 are the values in units of seconds
     # .nominal_start, .nomimal_end are the VEXTime objects
@@ -630,7 +642,7 @@ class Scan(object):
     __repr__ = method("{0.label}: {0.source} from {0.nominal_start}+{0.duration} using {0.mode}".format)
 
 
-def station_scan(station):
+def station_scan(station, shift):
     # scan == (scanId, <vex scan obj>)
     def station_observes(scan):
         (scanId, scanObj) = scan
@@ -640,14 +652,15 @@ def station_scan(station):
         station_line      = station_line[0] if station_line else None
         if not station_line:
             return None
-        return Scan(mode=scanObj['mode'], nominal_start=scanObj['start'], source=scanObj['source'],
+        # handle shifting of the start time 
+        return Scan(mode=scanObj['mode'], nominal_start=shift(mk_vextime(scanObj['start'])), source=scanObj['source'],
                     offset=station_line[1], duration=station_line[2], label=scanId)
     return station_observes
 
 # Filter the list of scans for the indicated station and also
 # filter out the ones that are in the past
 end_in_future     = compose(partial(lt, userinput.utc_limit), GetA('end'))
-get_station_scans = lambda station: compose(Filter(end_in_future), Filter(truth), Map(station_scan(station)), Call('iteritems'), GetN('SCHED'))
+get_station_scans = lambda station, shift: compose(Filter(end_in_future), Filter(truth), Map(station_scan(station, shift)), Call('iteritems'), GetN('SCHED'))
 
 
 #ra = 00h41m41.2986000s; dec =  -41d03'32.995800"; ref_coord_frame = J2000;
@@ -820,6 +833,14 @@ get_all_dbes_ = lambda xform: compose(Reduce(set.union), Map(compose(set, Map(xf
 get_all_dbes   = get_all_dbes_(GetN(0)) #compose(Reduce(set.union), Map(compose(get_dbes, GetA('dbes_used'))), Call('itervalues'))
 get_all_inputs = get_all_dbes_(identity)
 
+# Post-rdbe firmware load. Input:  Setup - the code will extract the necessary DBE info
+# give it 15 seconds, then do dbe_fs, dbe_dot_set=:force and a check if the firmeware loaded
+CMD       = lambda c: "rdbe_cmd={{0}},3,{0};".format(c).format
+post_load = compose(partial(add, ["!+1s"]), Reduce(add),
+                    Pam(Map(CMD("dbe_execute=init")), Map(const("!+1s")), Map(CMD("dbe_fs=on:on")),
+                        Map(CMD("dbe_dot_set=:force")), Map(const("!+1s"))),
+                    get_dbes, GetA('dbes_used'))
+
 ###############################################################################
 #
 #  Process the channels based on deduced type of firmware
@@ -846,7 +867,6 @@ def fqlist_pfb(setup):
         # assign those channels to the next available input
         (dbe, inp) = next(rdbe_inp)
         if dbe not in clrs:
-            #clrs[dbe].append( "rdbe_person={dbe},pfb".format(dbe=dbe) )
             clrs[dbe].append( "rdbe_send={dbe},off".format(**locals()) )
             clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=pfbg:pfbg_1_4.bin".format(dbe=dbe) )
             clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
@@ -872,11 +892,16 @@ def fqlist_pfb(setup):
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
 
+    # Give the personalities 20 seconds to load and query (i.e. log) what the 
+    # current personality is
+    #pers_load = ["!+20s"]+ map("rdbe_cmd={0},50,dbe_execute=init\n)  +
+    #            +map("rdbe_cmd={0},50,dbe_personality?".format, get_dbes(setup.dbes_used))
+
     # for all used dbes enable send again
     enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, get_dbes(setup.dbes_used), list())
     # concatenate all commands - take care of re-ordering the "rdbefXX" commands by XX
     return [pcal_state_f(pcal_s.pop())] + los.values() + concat(clrs.values())+sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) + \
-           rdbe_los.values() + mk_ioch(iochs.iteritems()) + enable_send
+           rdbe_los.values() + mk_ioch(iochs.iteritems()) + post_load(setup) + enable_send
 
 # distribute the DDC channels over the RDBE inputs 
 # according to vex2snap.pl
@@ -965,7 +990,7 @@ def fqlist_ddc(setup):
     else:
         # Distribute the channels over the available DBE's and channels-within-DBE
         available_channels = ddc_channels()
-        for ch in channels:
+        for ch in setup.channels:
             ch_assign[ ch ] = next(available_channels)
 
     # Now that we've assigned channels, we can configure the downconverters,
@@ -1009,13 +1034,17 @@ def fqlist_ddc(setup):
         clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=ddc:ddc_1601583.bin".format(dbe=dbe) )
         clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
 
+    # Give the personalities 20 seconds to load and query (i.e. log) what the 
+    # current personality is
+    #pers_load = ["!+15s"]+ map("rdbe_cmd={0},50,dbe_personality?".format, get_dbes(setup.dbes_used))
+
     # for all used dbes enable send again
     enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, get_dbes(setup.dbes_used), list())
 
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
     return [pcal_state_f(pcal_s.pop())] + los.values() + concat(clrs.values()) + sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) +\
-           rdbe_los.values() + dcs + mk_xbar(xbar) + mk_vdif(vdif) + enable_send
+           rdbe_los.values() + dcs + mk_xbar(xbar) + mk_vdif(vdif) + post_load(setup) + enable_send
 
 
 # lookup table
@@ -1034,7 +1063,7 @@ ifbbcread_fn   = choice(ifbbcread_.__contains__, ifbbcread_.__getitem__, Error("
 # describe a setup from the VEX file
 #################################################
 class Setup(object):
-    __slots__ = ['setup', 'mode', 'channels', 'track_frame_format', 'dbes_used']
+    __slots__ = ['setup', 'mode', 'channels', 'track_frame_format', 'dbes_used', 'vex']
 
     def __init__(self, **kwargs):
         reduce(lambda acc, attr: setattr(acc, attr, kwargs.pop(attr, None)) or acc, Setup.__slots__, self)
@@ -1059,7 +1088,15 @@ class Setup(object):
     def procedures(self):
         Assert(self.channels is not None, "No channels defined for setup {0}".format(self.setup))
         # generate the procedure texts
+        # first the body
         proc_s = Procedure(self.setup, make_fqlist(self.firmware)(self))
+        # then we surround it with stop all rdbe sends and enable the configured ones
+        proc_s.prepend("stop_send")
+        # enable data send for the whole year of experiment 
+        year = userinput.utc_shift(self.vex)(NominalStart(self.vex)).y
+        proc_s.append( map("rdbe_cmd={{0}},3,dbe_data_send=on:{year:04d}001000000:{year}365235959;".format(**locals()).format,
+                       get_dbes(self.dbes_used)) )
+        # put some stuff in the preob
         preob  = Procedure("preob",   ifbbcread_fn(self.firmware)(self))
         return [proc_s, preob]
 
@@ -1102,7 +1139,7 @@ def resolve_mode(vexobj):
 
         # Can already construct the actual setup object
         nSetup = Setup(mode=modename, setup=setupname, channels=list(),
-                       track_frame_format=vexobj['TRACKS'][setup['TRACKS']]['track_frame_format'])
+                       track_frame_format=vexobj['TRACKS'][setup['TRACKS']]['track_frame_format'], vex=vexobj)
 
         # Loop over all defined frequency channels, collect important frequency, lo info
         for fqchan in vexobj['FREQ'][setup['FREQ']].getall('chan_def'):
@@ -1202,7 +1239,7 @@ def process_vex(vexfile):
         # we do not extract the scan object(s) from the vexfile yet because
         # we need to retain the order of the scans (if we created a dict { "scanLabel":<scanObject> }
         # we could loose the order of scan label. There is no guarantee scan labels contain any useful information.
-        scans  = get_station_scans(userinput.station)( vexf )
+        scans  = get_station_scans(userinput.station, t_shift)( vexf )
 
         Assert(scans, "The station '{0}' does not observe any of the scans".format(userinput.station))
 
@@ -1243,9 +1280,13 @@ def process_vex(vexfile):
         # so we can properly add initialization commands for all used dbe's to
         # the appropriate procedures. Feel free to add other per-dbe stuff here
         procedures["sched_initi"].append( "rdbe_init" )
+
+        # Add a procedure which disables sending on all configured RDBEs
+        # then each procedure can enable the ones they require
+        stop_send = Procedure("stop_send", map("rdbe_cmd=dbe{0},3,dbe_data_send=off;".format, range(2)))
+        procedures[stop_send] = stop_send
         for dbe in get_all_dbes(setups):
-            for p, lst in [("sched_initi", ["rdbe_cmd={dbe},3,dbe_data_send=on;".format,
-                                            "rdbe_time={dbe},3".format, 
+            for p, lst in [("sched_initi", ["rdbe_time={dbe},3".format, 
                                             "rdbe_cmd={dbe},3,dbe_dot?;".format])]:
                 for cmd in lst:
                     procedures[p].append( cmd(**locals()) )
@@ -1277,19 +1318,19 @@ def process_vex(vexfile):
         # Now that we're sure we got everything, open the files and start writing
         (into_snp, into_prc, into_lst) = map(compose(GetA('write'), partial(open, mode='w'), MSG("Writing")), files)
 
-        for p in procedures.values():
-            into_prc(str(p))
-
         # produce .snp file with all scans in
         #   do the .snp header
         into_snp("\n".join(snap_header(vexf, userinput)))
 
-        # loop over all scans for the station
+        # The setup from the first scan can already be booted in initi
+        setup           = setups[scans[0].mode].setup
+        procedures["sched_initi"].append( setup  )
         setup           = None
         prev_end_time   = 0
         experiment_snap = exper( vexf )
         station_snap    = userinput.station.lower()
 
+        # loop over all scans for the station
         for scan in scans:
             # start with empty line to make sure we first append nothing to previous written line
             # and then issue a newline to start on the next one
@@ -1335,6 +1376,9 @@ def process_vex(vexfile):
             into_snp("\npostob\ncheckmk5")
         # and trigger sched_end
         into_snp("\nsched_end")
+
+        for p in procedures.values():
+            into_prc(str(p))
     return None
 
 ###################################################################################################
