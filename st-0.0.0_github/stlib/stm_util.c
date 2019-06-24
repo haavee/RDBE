@@ -4,6 +4,7 @@
 #include <sys/types.h>  /* data type definition header file */
 #include <sys/ipc.h>    /* interprocess communications header file */
 #include <sys/shm.h>    /* shared memory header file */
+#include <stdlib.h>
 
 #include "../../fs/include/pmodel.h"
 
