@@ -60,6 +60,9 @@ int itask;
         printf("cannot open RDBE address file %s\n",CONTROL_FILE);
         ierr=-539; goto error; 
     }
+    // Empty adresses
+    stm_addr->dbe0_add[0] = stm_addr->dbe1_add[0] = stm_addr->t450_add[0] = stm_addr->essr_add[0] = '\0';
+    //
     while (!feof(fp)){
        fscanf(fp, "%s %s", &rd1,&rd2);
 //       printf("%s %s\n", rd1,rd2);
