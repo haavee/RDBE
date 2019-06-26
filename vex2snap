@@ -840,11 +840,12 @@ get_all_dbes   = get_all_dbes_(GetN(0)) #compose(Reduce(set.union), Map(compose(
 get_all_inputs = get_all_dbes_(identity)
 
 # Post-rdbe firmware load. Input:  Setup - the code will extract the necessary DBE info
-# give it 15 seconds, then do dbe_fs, dbe_dot_set=:force and a check if the firmeware loaded
+# give it 15 seconds, then do dbe_ipps (26Jun2019 - NRAO email re.
+# rdbe_server v2.0.5) dbe_fs, dbe_dot_set=:force and a check if the firmeware loaded
 CMD       = lambda c: "rdbe_cmd={{0}},3,{0};".format(c).format
 post_load = compose(Append("sy=/usr2/oper/vlbish/vlbish /usr2/oper/vlbish/examples/rdbe_10g_init.scr allrdbe&"),
                     Prepend("!+1s"), Reduce(add),
-                    Pam(Map(CMD("dbe_execute=init")), Map(const("!+1s")), Map(CMD("dbe_fs=on:on")),
+                    Pam(Map(CMD("dbe_ipps=1")), Map(const("!+1s")), Map(CMD("dbe_fs=on:on")), Map(const("!+1s")),
                         Map(CMD("dbe_dot_set=:force")), Map(const("!+1s"))),
                     get_dbes, GetA('dbes_used'))
 
@@ -874,8 +875,7 @@ def fqlist_pfb(setup):
         # assign those channels to the next available input
         (dbe, inp) = next(rdbe_inp)
         if dbe not in clrs:
-            clrs[dbe].append( "rdbe_send={dbe},off".format(**locals()) )
-            clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=pfbg:pfbg_1_4.bin".format(dbe=dbe) )
+            clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=pfbg:pfbg_1_4.bin;".format(dbe=dbe) )
             clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
         # count channels per IF
         for (chan, ch) in enumerate(ch_list, start=1):
@@ -899,16 +899,9 @@ def fqlist_pfb(setup):
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
 
-    # Give the personalities 20 seconds to load and query (i.e. log) what the 
-    # current personality is
-    #pers_load = ["!+20s"]+ map("rdbe_cmd={0},50,dbe_execute=init\n)  +
-    #            +map("rdbe_cmd={0},50,dbe_personality?".format, get_dbes(setup.dbes_used))
-
-    # for all used dbes enable send again
-    enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, get_dbes(setup.dbes_used), list())
     # concatenate all commands - take care of re-ordering the "rdbefXX" commands by XX
     return [pcal_state_f(pcal_s.pop())] + los.values() + concat(clrs.values())+sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) + \
-           rdbe_los.values() + mk_ioch(iochs.iteritems()) + post_load(setup) + enable_send
+           rdbe_los.values() + mk_ioch(iochs.iteritems()) + post_load(setup)
 
 # distribute the DDC channels over the RDBE inputs 
 # according to vex2snap.pl
@@ -951,7 +944,7 @@ get_dds_cfg = lambda sb, fq, bw: compose(next, partial(itertools.dropwhile, is_n
 # input: dict of {<dc#> : <phys inp>, ... }
 # produce string "dbe_xbar=<phys inp>:<phys inp>:<phys inp>[:<dummy entries up until DC07 imput>;"
 #  sorted by <dc#>
-mk_xbar_ = lambda tbl: "dbe_xbar="+":".join(map(str, getitem_(*sorted(tbl.keys()))(tbl)))+ ":".join(["2"]*(8-len(tbl)))+";"
+mk_xbar_ = lambda tbl: "dbe_xbar="+":".join(map(str, getitem_(*sorted(tbl.keys()))(tbl))) + ":" + ":".join(["2"]*(8-len(tbl)))+";"
 # input: dict of { dbe : dc#-to-phys-input-mapping }
 # output: list of [ "rdbe_cmd=dbe0,3,dbe_xbar=3:3:3:2:2:2:2:2;", ... ]
 mk_xbar  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3,".format, GetN(0)), compose(mk_xbar_, GetN(1))))),
@@ -1037,21 +1030,13 @@ def fqlist_ddc(setup):
 
     # add commands to load personality and clear
     for dbe in get_dbes(setup.dbes_used):
-        clrs[dbe].append( "rdbe_send={dbe},off".format(**locals()) )
         clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=ddc:ddc_1601583.bin".format(dbe=dbe) )
         clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
-
-    # Give the personalities 20 seconds to load and query (i.e. log) what the 
-    # current personality is
-    #pers_load = ["!+15s"]+ map("rdbe_cmd={0},50,dbe_personality?".format, get_dbes(setup.dbes_used))
-
-    # for all used dbes enable send again
-    enable_send = reduce(lambda acc, x: acc.append("rdbe_send={0},on".format(x)) or acc, get_dbes(setup.dbes_used), list())
 
     # assert there's only one pcal state
     Assert(len(pcal_s)==1, "Inconsistent PCAL states - more than one found")
     return [pcal_state_f(pcal_s.pop())] + los.values() + concat(clrs.values()) + sorted(fqs, key=int_key(r"^rdbef(\d+)", re.I)) +\
-           rdbe_los.values() + dcs + mk_xbar(xbar) + mk_vdif(vdif) + post_load(setup) + enable_send
+           rdbe_los.values() + dcs + mk_xbar(xbar) + mk_vdif(vdif) + post_load(setup)
 
 
 # lookup table
@@ -1099,7 +1084,7 @@ class Setup(object):
         proc_s = Procedure(self.setup, make_fqlist(self.firmware)(self))
         # then we surround it with stop all rdbe sends and enable the configured ones
         proc_s.prepend("stop_send")
-        # enable data send for the whole year of experiment 
+        # enable data send for the whole year of experiment, only for the DBEs used in this setup
         year = userinput.utc_shift(self.vex)(NominalStart(self.vex)).y
         proc_s.append( map("rdbe_cmd={{0}},3,dbe_data_send=on:{year:04d}001000000:{year}365235959;".format(**locals()).format,
                        get_dbes(self.dbes_used)) )
