@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
-#include <byteswap.h>
+#include <stdint.h>
 #include "../../fs/include/params.h"     /* FS parameters            */
 #include "../../fs/include/fs_types.h"   /* FS header files        */
 #include "../../fs/include/fscom.h"      /* FS shared mem. structure */
@@ -19,31 +19,60 @@
 #include "../include/stcom.h"
 #include "../include/stm_addr.h"   /* Station shared mem. pointer*/
 
-#if 0
+/* 
+ * Helper structs for decoding TSYS broadcasts, cf. VLBA Sensitivity Upgrade memo 44 (VLBASU_44.pdf) 
+ *
+ * Note: it is the PowerPC in the RDBE doing the tsys broadcasts.
+ *       that CPU has big endian byte ordering, compared to Intel's little
+ *       endian byte ordering. The decoding takes this into account.
+ **/
+typedef struct _SwitchedPowerPFB {
+        uint16_t ifNum;    /* 0 or 1 */
+        uint16_t chanNum;  /* 0 to 15 */
+        uint16_t dummy[2]; /* not used */
+        uint64_t pOn;
+        uint64_t pOff;
+} __attribute__((packed)) SwitchedPowerPFB;
+
+typedef struct _SwitchedPowerDDC {
+        uint64_t pOn;
+        uint64_t pOff;
+        int64_t  vOn;
+        int64_t  vOff;
+} __attribute__((packed)) SwitchedPowerDDC;
 
 
-//  20020 for 1pps , 20021 for Tsys?? At moment 20021 is fixed in rdbe_server
-#define HELLO_PORT 20021 
-//GROUP 239.0.2.34 for rdbe0, 35 for rdbe1
-#define HELLO_GROUP "239.0.2.34"
-#define MSGBUFSIZE 1024
+typedef struct _SwitchedPowerSetDDC {
+    char             timeBCD[16];      /* YYYYDDDHHMMSSxxx (xxx are dummies) */
+    uint32_t         countOn;
+    uint32_t         countOff;
+    SwitchedPowerDDC switchedPower[0]; /* points to the data */
+} __attribute__((packed)) SwitchedPowerSetDDC;
 
-//FS----------------------
-struct stcom *st;
-//------------------------
+typedef struct _SwitchedPowerSetPFB {
+    char             timeBCD[16];      /* YYYYDDDHHMMSSxxx (xxx are dummies) */
+    SwitchedPowerPFB switchedPower[0]; /* points to the data */
+} __attribute__((packed)) SwitchedPowerSetPFB;
 
-int64_t __builtin_bswap64(int64_t x) ;
-int32_t __builtin_bswap32(int32_t x) ;
+void decode_pfb(int rdbe, unsigned char const* msg, size_t n);
+void decode_ddc(int rdbe, unsigned char const* msg, size_t n);
 
-u_int16_t bswap16(x)
-	u_int16_t x;
-{
-	return ((x << 8) & 0xff00) | ((x >> 8) & 0x00ff);
-}
-void exit();
-#endif
+/* The previous code used "#include <byteswap.h>" which is 
+ * a GNU extension and therefore not standard  */
+uint16_t swap_uint16( uint16_t val );
+int16_t  swap_int16( int16_t val );
+uint32_t swap_uint32( uint32_t val );
+int32_t  swap_int32( int32_t val );
+int64_t  swap_int64( int64_t val );
+uint64_t swap_uint64( uint64_t val );
+
+
+
+
+
 
 #define DEFAULT_PORT "20021"
+
 /*
  * rdbe_tsys_receive <rdbe:int> <multicastIP> [<multicastPort(20021)]
  */
@@ -124,8 +153,11 @@ main(int argc, char *argv[]) {
      * That's why we use inet_ntoa/ntohs because we transform the values
      * that we gave to the O/S back into human readable form as double
      * check*/
-    printf("RDBE_TSYS_RECEIVE[%d] listening for TSYS on %s:%d\n", rdbe, inet_ntoa(mreq.imr_multiaddr), ntohs(addr.sin_port));
+    printf("RDBE_TSYS_RECEIVE[%d] listening for TSYS on %s:%d\n",
+           rdbe, inet_ntoa(mreq.imr_multiaddr), ntohs(addr.sin_port));
+
     while( 1 ) {
+        size_t             nValues;
         ssize_t            n;
         socklen_t          addrlen = sizeof(struct sockaddr_in);
         unsigned char      tsys_msg[65536];
@@ -135,10 +167,112 @@ main(int argc, char *argv[]) {
             printf("recvfrom on fd failed, terminating - %s\n", strerror(errno));
             break;
         }
+        /* Check which format it's most likely to be.
+         * DDC firmware outputs at most four values (maybe 8 in later
+         * versions) so let's see how many values we find IF we assume DDC
+         * */
+        if( (nValues = (n - sizeof(SwitchedPowerSetDDC)) / sizeof(SwitchedPowerDDC)) <= 8 )
+            decode_ddc(rdbe, tsys_msg, n);
+        else
+            /* OK presumably it's PFB then ...*/
+            decode_pfb(rdbe, tsys_msg, n);
         /*printf("RDBE[%d] %d bytes of TSYS\n", rdbe, n);*/
     }
     return 0;
 }
+
+
+/* Decoding of the actual messages */
+void decode_pfb(int rdbe, unsigned char const* msg, size_t n) {
+    size_t                     i;
+    double*                    caloff[2] = { rdbe==0 ? stm_addr->rdbe0_if0_caloff : stm_addr->rdbe1_if0_caloff, /* IF0 */
+                                             rdbe==0 ? stm_addr->rdbe0_if1_caloff : stm_addr->rdbe1_if1_caloff  /* IF1 */};
+    double*                    calon[2]  = { rdbe==0 ? stm_addr->rdbe0_if0_calon  : stm_addr->rdbe1_if0_calon,  /* IF0 */
+                                             rdbe==0 ? stm_addr->rdbe0_if1_calon  : stm_addr->rdbe1_if1_calon   /* IF1 */};
+    size_t const               nch = (n - sizeof(SwitchedPowerSetPFB)) / sizeof(SwitchedPowerPFB);
+    SwitchedPowerPFB           tmp;
+    SwitchedPowerSetPFB const* pfb = (SwitchedPowerSetPFB const*)msg;
+
+    /*printf("PFB TSYS [%u channels]:\n", nch);*/
+    /* Copy the fields from the message (i.e. the bytes) or else we may run
+     * into alignment issues when byteswapping */
+    for(i=0; i<nch; i++) {
+        memcpy(&tmp, &pfb->switchedPower[i], sizeof(SwitchedPowerPFB));
+        tmp.ifNum   = swap_uint16(tmp.ifNum);
+        tmp.chanNum = swap_uint16(tmp.chanNum);
+        tmp.pOn     = swap_uint64(tmp.pOn);
+        tmp.pOff    = swap_uint64(tmp.pOff);
+        /*printf("   IF%02d/CH%02d On/Off=%lu/%lu\n", tmp.ifNum, tmp.chanNum, tmp.pOn, tmp.pOff);*/
+        caloff[tmp.ifNum][tmp.chanNum] = tmp.pOff;
+        calon [tmp.ifNum][tmp.chanNum] = tmp.pOn;
+    }
+}
+
+/* DDC tsys all ends up in rdbeN if0 ch 0..4 */
+void decode_ddc(int rdbe, unsigned char const* msg, size_t n) {
+    size_t                     i;
+    double*                    caloff[2] = { rdbe==0 ? stm_addr->rdbe0_if0_caloff : stm_addr->rdbe1_if0_caloff, /* IF0 */
+                                             rdbe==0 ? stm_addr->rdbe0_if1_caloff : stm_addr->rdbe1_if1_caloff  /* IF1 */};
+    double*                    calon[2]  = { rdbe==0 ? stm_addr->rdbe0_if0_calon  : stm_addr->rdbe1_if0_calon,  /* IF0 */
+                                             rdbe==0 ? stm_addr->rdbe0_if1_calon  : stm_addr->rdbe1_if1_calon   /* IF1 */};
+    uint32_t                   countOn, countOff;
+    size_t const               nch = (n - sizeof(SwitchedPowerSetDDC)) / sizeof(SwitchedPowerDDC);
+    SwitchedPowerDDC           tmp;
+    SwitchedPowerSetDDC const* ddc = (SwitchedPowerSetDDC const*)msg;
+
+    /* clear all counts for this RDBE; all caloff/calon have same size */
+    memset(caloff[0], 0, sizeof(stm_addr->rdbe0_if0_caloff)); /* IF0 off */
+    memset(caloff[1], 0, sizeof(stm_addr->rdbe0_if0_caloff)); /* IF1 off */
+    memset(calon[0],  0, sizeof(stm_addr->rdbe0_if0_calon )); /* IF0 on  */
+    memset(calon[1],  0, sizeof(stm_addr->rdbe0_if0_calon )); /* IF1 on  */
+
+    countOn  = ddc->countOn;
+    countOff = ddc->countOff;
+    countOn  = swap_uint32(countOn);
+    countOff = swap_uint32(countOff);
+    /*printf("DDC TSYS [%u channels] countOn/Off:\n", nch, countOn, countOff);*/
+    /* Copy the fields from the message (i.e. the bytes) or else we may run
+     * into alignment issues when byteswapping */
+    for(i=0; i<nch; i++) {
+        memcpy(&tmp, &ddc->switchedPower[i], sizeof(SwitchedPowerDDC));
+        tmp.pOn     = swap_uint64(tmp.pOn);
+        tmp.pOff    = swap_uint64(tmp.pOff);
+        tmp.vOn     = swap_int64(tmp.vOn);
+        tmp.vOff    = swap_int64(tmp.vOff);
+        /*printf("   CH%02d pOn/pOff=%lu/%lu vOn/vOff=%ld/%ld\n", i, tmp.pOn, tmp.pOff, tmp.vOn, tmp.vOff);*/
+        caloff[0][i] = tmp.vOff;
+        calon[0][i]  = tmp.vOn;
+    }
+}
+
+
+
+uint16_t swap_uint16( uint16_t val ) {
+    return (val << 8) | (val >> 8 );
+}
+int16_t swap_int16( int16_t val ) {
+    return (val << 8) | ((val >> 8) & 0xFF);
+}
+uint32_t swap_uint32( uint32_t val ) {
+    val = ((val << 8) & 0xFF00FF00 ) | ((val >> 8) & 0xFF00FF ); 
+    return (val << 16) | (val >> 16);
+}
+int32_t swap_int32( int32_t val ) {
+    val = ((val << 8) & 0xFF00FF00) | ((val >> 8) & 0xFF00FF ); 
+    return (val << 16) | ((val >> 16) & 0xFFFF);
+}
+int64_t swap_int64( int64_t val ) {
+    val = ((val << 8) & 0xFF00FF00FF00FF00ULL ) | ((val >> 8) & 0x00FF00FF00FF00FFULL );
+    val = ((val << 16) & 0xFFFF0000FFFF0000ULL ) | ((val >> 16) & 0x0000FFFF0000FFFFULL );
+    return (val << 32) | ((val >> 32) & 0xFFFFFFFFULL);
+}
+uint64_t swap_uint64( uint64_t val ) {
+    val = ((val << 8) & 0xFF00FF00FF00FF00ULL ) | ((val >> 8) & 0x00FF00FF00FF00FFULL );
+    val = ((val << 16) & 0xFFFF0000FFFF0000ULL ) | ((val >> 16) & 0x0000FFFF0000FFFFULL );
+    return (val << 32) | (val >> 32);
+}
+
+
 #if 0
 //============================================
      struct sockaddr_in addr;

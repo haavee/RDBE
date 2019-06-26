@@ -95,7 +95,7 @@ build_lostr(char* in, char* out) {
     *out = 0;
     strcat( out, "vlbi_lo " );
 
-    s = strtok( NULL, ",");
+    s = strtok( in, ",");
     if( s )
         strcat( out, s );
 
