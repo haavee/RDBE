@@ -451,9 +451,8 @@ def recorder_type(rec):
 #  <vexime>                 shift day of observation to day-of-year in time stamp
 #  +<vextime>, -<vextime>   add/subtract this much to each time stamp
 rxVEXOffset = re.compile(r"^(?P<sign>[-+])?((?P<y>\d+)y)?((?P<d>\d+)d)?((?P<h>\d+)h)?((?P<m>\d+)m)?((?P<s>\d+)s)?$")
-as_vextime  = compose(VEXTime, Call('utctimetuple'))
-maybe_today = choice(partial(eq, "today"), lambda _: as_vextime(datetime.datetime.utcnow()), const(None))
-check_shift = compose(choice(is_none, Error("time-shift argument is not a vextime or 'today' (see --help)"), identity),
+maybe_today = choice(partial(eq, "today"), compose(VEXTime, Call('timetuple'), const(datetime.date.today())), const(None))
+check_shift = compose(choice(is_none, Error("time-shift argument is not a vextime or 'today' (see --usage)"), identity),
                       combine(logic_or, compose(if_not_none(compose(VEXTime, Call('groupdict'))), rxVEXOffset.match), maybe_today),
                       partial(re.sub, r"[ \t\n]*", ""), str.strip, str.lower)
 # The codes uses a sidereal day length of 23 hours, 56 minutes, 4seconds
@@ -474,14 +473,20 @@ def shift(shift):
         return const(partial(add, int(vext.sign*vext.seconds)))
     else:
         # Move to specific day (today, or specific year+doy)
-        print("Shifting schedule to ",vext)
+        cache = set()
+        print("Shifting schedule to {0.y:04d}y{0.d:03d}d".format(vext))
         # so, given a vex object, we extract the nominal start time and compute the shift wrt to that one
         def compute_shift(vexf):
             nominal_start = NominalStart(vexf)
             # arrange for offset such that if vext > nominal_start the diff is positive
             # each day adds 23h56m4s 
-            offset = (365 * (vext.y - nominal_start.y) + vext.d - nominal_start.d) * siderealday.seconds + \
-                     (vext.h - nominal_start.h) * 3600 + (vext.m - nominal_start.m) * 60 + (vext.s - nominal_start.s)
+            offset = (365 * (vext.y - nominal_start.y) + vext.d - nominal_start.d) * siderealday.seconds
+            # print offset message only once / vexfile
+            name = exper_name(vexf)
+            if name not in cache:
+                print(name,": shift nominal_start={0} by offset={1}{2}".format(nominal_start, "-" if offset<0 else "",
+                      sec2VEXTime(abs(offset))))
+                cache.add(name)
             return partial(add, int(offset))
         return compute_shift
 
