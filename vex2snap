@@ -97,14 +97,15 @@ Pam         = lambda *fns   : (lambda *x, **k: map(lambda f: f(*x, **k), fns))
 Filter      = lambda f      : partial(filter, f)
 Reduce      = lambda f, *a  : partial(reduce, f, *a)
 Sorted      = lambda **kws  : partial(sorted, **kws)
+Prepend     = lambda item   : lambda l: listify(item)+l
+Append      = lambda item   : lambda l: l.extend(listify(item)) or l
 GroupBy     = lambda f      : (lambda l: itertools.groupby(l, f))
 Zip         = lambda l      : (lambda x: zip(l,x))
 Slice       = lambda *args  : (lambda o: getitem(o, slice(*args)))
 XformItem   = lambda n, f   : (lambda o: setitem_(n, f(o[n])))
 Type        = lambda **kwargs  : type('', (), kwargs)
 all_equal   = compose(lambda g: next(g, True) and not next(g, False), itertools.groupby)
-#is_iterable = combine(logic_or, hasattr_('__iter__'), hasattr_('__getitem__'))
-#listify     = choice(is_iterable, identity, lambda x: [x])
+listify     = choice(lambda l: isinstance(l, list), identity, lambda x: [x])
 is_none     = partial(is_, None)
 if_not_none = lambda f, d=None: choice(is_none, const(d), f)
 GetN        = itemgetter
@@ -841,7 +842,8 @@ get_all_inputs = get_all_dbes_(identity)
 # Post-rdbe firmware load. Input:  Setup - the code will extract the necessary DBE info
 # give it 15 seconds, then do dbe_fs, dbe_dot_set=:force and a check if the firmeware loaded
 CMD       = lambda c: "rdbe_cmd={{0}},3,{0};".format(c).format
-post_load = compose(partial(add, ["!+1s"]), Reduce(add),
+post_load = compose(Append("sy=/usr2/oper/vlbish/vlbish /usr2/oper/vlbish/examples/rdbe_10g_init.scr allrdbe&"),
+                    Prepend("!+1s"), Reduce(add),
                     Pam(Map(CMD("dbe_execute=init")), Map(const("!+1s")), Map(CMD("dbe_fs=on:on")),
                         Map(CMD("dbe_dot_set=:force")), Map(const("!+1s"))),
                     get_dbes, GetA('dbes_used'))
