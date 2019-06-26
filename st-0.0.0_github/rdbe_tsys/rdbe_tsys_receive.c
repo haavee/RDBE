@@ -67,7 +67,7 @@ int64_t  swap_int64( int64_t val );
 uint64_t swap_uint64( uint64_t val );
 
 
-
+FILE*  logFile = NULL;
 
 
 
@@ -149,6 +149,18 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* If the binary was called (symlinked or copied) as
+     * "rdbe_tsys_receive_log" then we autmatically log to /tmp */
+    if( (p=strstr(argv[0], "_log"))!=NULL && p==(argv[0] + (strlen(argv[0]) - 4)) ) {
+        opts[0][0] = '\0';
+        sprintf(opts[0], "/tmp/rdbe_tsys_%d.log", rdbe);
+        if( (logFile=fopen(opts[0], "a+"))==NULL )
+            printf("WARN: failed to open log file %s - %s\n", opts[0], strerror(errno));
+    }
+
+    /* Before trying to write to shared memory, let's attach is yesno? */
+    setup_st();
+
     /* And we should be up-and-running. Tell user exactly what we're doing.
      * That's why we use inet_ntoa/ntohs because we transform the values
      * that we gave to the O/S back into human readable form as double
@@ -193,7 +205,7 @@ void decode_pfb(int rdbe, unsigned char const* msg, size_t n) {
     SwitchedPowerPFB           tmp;
     SwitchedPowerSetPFB const* pfb = (SwitchedPowerSetPFB const*)msg;
 
-    /*printf("PFB TSYS [%u channels]:\n", nch);*/
+    (void)(logFile && fprintf(logFile, "PFB TSYS [%u channels]:\n", nch));
     /* Copy the fields from the message (i.e. the bytes) or else we may run
      * into alignment issues when byteswapping */
     for(i=0; i<nch; i++) {
@@ -202,7 +214,7 @@ void decode_pfb(int rdbe, unsigned char const* msg, size_t n) {
         tmp.chanNum = swap_uint16(tmp.chanNum);
         tmp.pOn     = swap_uint64(tmp.pOn);
         tmp.pOff    = swap_uint64(tmp.pOff);
-        /*printf("   IF%02d/CH%02d On/Off=%lu/%lu\n", tmp.ifNum, tmp.chanNum, tmp.pOn, tmp.pOff);*/
+        (void)(logFile && fprintf(logFile, "   IF%02d/CH%02d On/Off=%lu/%lu\n", tmp.ifNum, tmp.chanNum, tmp.pOn, tmp.pOff));
         caloff[tmp.ifNum][tmp.chanNum] = tmp.pOff;
         calon [tmp.ifNum][tmp.chanNum] = tmp.pOn;
     }
@@ -230,7 +242,7 @@ void decode_ddc(int rdbe, unsigned char const* msg, size_t n) {
     countOff = ddc->countOff;
     countOn  = swap_uint32(countOn);
     countOff = swap_uint32(countOff);
-    /*printf("DDC TSYS [%u channels] countOn/Off:\n", nch, countOn, countOff);*/
+    (void)(logFile && fprintf(logFile, "DDC TSYS [%u channels] countOn/Off:\n", nch, countOn, countOff));
     /* Copy the fields from the message (i.e. the bytes) or else we may run
      * into alignment issues when byteswapping */
     for(i=0; i<nch; i++) {
@@ -239,7 +251,7 @@ void decode_ddc(int rdbe, unsigned char const* msg, size_t n) {
         tmp.pOff    = swap_uint64(tmp.pOff);
         tmp.vOn     = swap_int64(tmp.vOn);
         tmp.vOff    = swap_int64(tmp.vOff);
-        /*printf("   CH%02d pOn/pOff=%lu/%lu vOn/vOff=%ld/%ld\n", i, tmp.pOn, tmp.pOff, tmp.vOn, tmp.vOff);*/
+        (void)(logFile && fprintf(logFile, "   CH%02d pOn/pOff=%lu/%lu vOn/vOff=%ld/%ld\n", i, tmp.pOn, tmp.pOff, tmp.vOn, tmp.vOff));
         caloff[0][i] = tmp.vOff;
         calon[0][i]  = tmp.vOn;
     }
