@@ -842,7 +842,8 @@ get_all_inputs = get_all_dbes_(identity)
 # Post-rdbe firmware load. Input:  Setup - the code will extract the necessary DBE info
 # give it 15 seconds, then do dbe_ipps (26Jun2019 - NRAO email re.
 # rdbe_server v2.0.5) dbe_fs, dbe_dot_set=:force and a check if the firmeware loaded
-CMD       = lambda c: "rdbe_cmd={{0}},3,{0};".format(c).format
+CMD       = lambda c: "rdbe_cmd={{0}},1,{0};".format(c).format
+DMC       = lambda c: "rdbe_cmd={0},1,{{0}};".format(c).format
 post_load = compose(Append("sy=/usr2/oper/vlbish/vlbish /usr2/oper/vlbish/examples/rdbe_10g_init.scr allrdbe&"),
                     Prepend("!+1s"), Reduce(add),
                     Pam(Map(CMD("dbe_ipps=1")), Map(const("!+1s")), Map(CMD("dbe_fs=on:on")), Map(const("!+1s")),
@@ -875,7 +876,18 @@ def fqlist_pfb(setup):
         # assign those channels to the next available input
         (dbe, inp) = next(rdbe_inp)
         if dbe not in clrs:
+            # Mail Matt Luce 27Jun2019 Startup procedure:
+            #The startup sequence should be:
+            #    1.  dbe_personality=DDC:ddc_1601583.bin;
+            #    2.  WAIT (~20s)
+            #    3.  dbe_execute=init; (executes the commands in the conf file)
+            #    4.  WAIT (~10s)
+            #    5.  dbe_dot_set=;
+            #    6.  VERIFY TIME WITH "dbe_dot?;"  loop to #5 if not syncerr_eq_0
+            #    7.  EVERYTHING ELSE
             clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=pfbg:pfbg_1_4.bin;".format(dbe=dbe) )
+            clrs[dbe].append( "rdbe_cmd={dbe},10,dbe_execute=init;".format(dbe=dbe) )
+            clrs[dbe].append( "rdbe_cmd={dbe},1,dbe_fpga_bin_info?;".format(dbe=dbe) )
             clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
         # count channels per IF
         for (chan, ch) in enumerate(ch_list, start=1):
@@ -951,9 +963,26 @@ mk_xbar  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3,".format
                    Call('iteritems'), DD("xbar-cfg"))
 # input:  dict of { <dbe>: [0,2,4,..] } VDIF thread assignments
 # output: [ "rdbe_cmd=<dbe>,3,dbe_vdif_threads_id=0,2,4;", ... ]
-mk_vdif_ = lambda lst: "dbe_vdif_threads_id="+":".join(map(str, lst))+";"
-mk_vdif  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3,".format, GetN(0)), compose(mk_vdif_, GetN(1))))),
+mk_vdif_ = lambda lst: "dbe_vdif_threads_id="+":".join(map(str, lst))
+mk_vdifOL= compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},1,".format, GetN(0)), compose(mk_vdif_, GetN(1))))),
                    Call('iteritems'), DD("vdif-thread-cfg"))
+
+#Pam(compose(Map, DMC, GetN(0)),
+#    compose(Pam(mk_vdif_, const("dbe_ddc_bits_sample=1:1:1:1"), const("dbe_ddc_chan_count=1")), GetN(1)))
+# for each rdbe we must:
+#    rdbe_cmd={dbe},1,dbe_vdif_threads_id=....;
+#    rdbe_cmd={dbe},1,dbe_ddc_bits_sample=1:1:1:1;
+#    rdbe_cmd={dbe},1,dbe_ddc_chan_count=1;
+def mk_vdif(dbe_threads):
+    rv = list()
+    for (dbe, threads) in dbe_threads.iteritems():
+        t = list()
+        t.append( mk_vdif_(threads) )
+        t.extend( ["dbe_ddc_bits_sample=1:1:1:1", "dbe_ddc_chan_count=1"] )
+        rv.extend( map(DMC(dbe), t) )
+    print("returning rv=",rv)
+    return rv
+
 
 def fqlist_ddc(setup):
     # put all channels of one kind of sideband in one DBE, filter out
@@ -1030,7 +1059,10 @@ def fqlist_ddc(setup):
 
     # add commands to load personality and clear
     for dbe in get_dbes(setup.dbes_used):
+        # See startup sequence above under 'Mail Matt Luce 27Jun2019'
         clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=ddc:ddc_1601583.bin".format(dbe=dbe) )
+        clrs[dbe].append( "rdbe_cmd={dbe},10,dbe_execute=init;".format(dbe=dbe) )
+        clrs[dbe].append( "rdbe_cmd={dbe},1,dbe_fpga_bin_info?;".format(dbe=dbe) )
         clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
 
     # assert there's only one pcal state
