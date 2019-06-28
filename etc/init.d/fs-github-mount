@@ -1,0 +1,48 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          fs-github-mount
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     S
+# Default-Stop:      
+# Short-Description: bind mount /usr2/{st,control}_github directly into git controlled subdir
+# Description:       The /usr2/{st,control} symlinks to actual st,control versions ONLY
+#                    works if they symlink to a directory in the same /usr2/ directory.
+#                    But https://github.com/haavee/RDBE/{st-0.0.0,control}_github versions
+#                    introduce (at least) one extra level of indirection.
+#                    So this script uses "bind mounts" to (re)mount part of the file system
+#                    hierarchy to /usr2/{st,control}_github.
+#                    Then, a station can easily select which st,control version to use by
+#                    symlinking /usr2/{st,control} -> /usr2/{st,control}_<whatever>
+#                   
+### END INIT INFO
+
+. /lib/lsb/init-functions
+
+GITHUB_ROOT=
+if [ -r /etc/default/fs-github-mount ]; then
+    . /etc/default/fs-github-mount
+fi
+
+if [ -z "${GITHUB_ROOT}" ]; then
+    log_failure_msg "The GITHUB_ROOT directory is not set"
+    exit 1
+fi
+
+for dir in st-0.0.0 control proc; do
+    if [ ! -d "/usr2/${dir}_github" ]; then
+        mkdir -p "/usr2/${dir}_github"
+    fi
+done
+
+for dir in st-0.0.0 control proc; do
+    srcdir="${GITHUB_ROOT}/${dir}_github"
+    if [ ! -d "${srcdir}" ]; then
+        log_failure_msg "${GITHUB_ROOT} does not contain:"
+        log_failure_msg "${srcdir}"
+    else
+	dstdir="/usr2/${dir}_github"
+	log_daemon_msg "Mounting ${srcdir} to ${dstdir}" "fs-github-mount"
+	/bin/mount --bind ${srcdir} ${dstdir}
+    fi
+done

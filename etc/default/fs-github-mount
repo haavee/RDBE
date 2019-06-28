@@ -1,0 +1,4 @@
+# Set GITHUB_ROOT to the directory where 
+#   git clone https://github.com/haavee/RDBE.git
+# ended up
+GITHUB_ROOT=/usr2/RDBE
