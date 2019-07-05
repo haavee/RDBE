@@ -179,16 +179,13 @@ main(int argc, char *argv[]) {
             printf("recvfrom on fd failed, terminating - %s\n", strerror(errno));
             break;
         }
+        nValues = ((n - sizeof(SwitchedPowerSetDDC)) / sizeof(SwitchedPowerDDC));
+        (void)(logFile && fprintf(logFile, "RDBE[%d] received broadcast of %u bytes - assume type %s\n", rdbe, n, nValues<=8 ? "DDC" : "PFB")); 
         /* Check which format it's most likely to be.
          * DDC firmware outputs at most four values (maybe 8 in later
          * versions) so let's see how many values we find IF we assume DDC
          * */
-        if( (nValues = (n - sizeof(SwitchedPowerSetDDC)) / sizeof(SwitchedPowerDDC)) <= 8 )
-            decode_ddc(rdbe, tsys_msg, n);
-        else
-            /* OK presumably it's PFB then ...*/
-            decode_pfb(rdbe, tsys_msg, n);
-        /*printf("RDBE[%d] %d bytes of TSYS\n", rdbe, n);*/
+        (nValues <= 8 ? decode_ddc : decode_pfb)(rdbe, tsys_msg, n);
     }
     return 0;
 }
