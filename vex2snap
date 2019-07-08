@@ -962,25 +962,23 @@ mk_xbar_ = lambda tbl: "dbe_xbar="+":".join(map(str, getitem_(*sorted(tbl.keys()
 mk_xbar  = compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},3,".format, GetN(0)), compose(mk_xbar_, GetN(1))))),
                    Call('iteritems'), DD("xbar-cfg"))
 # input:  dict of { <dbe>: [0,2,4,..] } VDIF thread assignments
-# output: [ "rdbe_cmd=<dbe>,3,dbe_vdif_threads_id=0,2,4;", ... ]
+# output: [ "dbe_vdif_threads_id=0,2,4;", ... ]
 mk_vdif_ = lambda lst: "dbe_vdif_threads_id="+":".join(map(str, lst))
-mk_vdifOL= compose(Map(compose(Reduce(add), Pam(compose("rdbe_cmd={0},1,".format, GetN(0)), compose(mk_vdif_, GetN(1))))),
-                   Call('iteritems'), DD("vdif-thread-cfg"))
 
-#Pam(compose(Map, DMC, GetN(0)),
-#    compose(Pam(mk_vdif_, const("dbe_ddc_bits_sample=1:1:1:1"), const("dbe_ddc_chan_count=1")), GetN(1)))
 # for each rdbe we must:
 #    rdbe_cmd={dbe},1,dbe_vdif_threads_id=....;
 #    rdbe_cmd={dbe},1,dbe_ddc_bits_sample=1:1:1:1;
-#    rdbe_cmd={dbe},1,dbe_ddc_chan_count=1;
+#    rdbe_cmd={dbe},1,fpga_wr=W:0x800020:0x0000;
+#  That last one is (email Matt Luce 5Jul2019) to set the
+#   log2(nchan-per-thread) in the header.
+#  We have 1 channel per thread so log2(1) = 0
 def mk_vdif(dbe_threads):
     rv = list()
     for (dbe, threads) in dbe_threads.iteritems():
         t = list()
         t.append( mk_vdif_(threads) )
-        t.extend( ["dbe_ddc_bits_sample=1:1:1:1", "dbe_ddc_chan_count=1"] )
+        t.extend( ["dbe_ddc_bits_sample=1:1:1:1", "dbe_ddc_chan_count=1", "fpga_wr=W:0x800020:0x0000"] )
         rv.extend( map(DMC(dbe), t) )
-    print("returning rv=",rv)
     return rv
 
 
