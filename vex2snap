@@ -1347,7 +1347,6 @@ def process_vex(vexfile):
         # The setup from the first scan can already be booted in initi
         setup           = setups[scans[0].mode].setup
         procedures["sched_initi"].append( setup  )
-        setup           = None
         prev_end_time   = 0
         experiment_snap = exper( vexf )
         station_snap    = userinput.station.lower()
