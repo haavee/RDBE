@@ -22,16 +22,16 @@
 #                               By default vex2snap will use the recorder defined
 #                               in the VEX file for the selected station. Override
 #                               by using this option.
-#                               TYPE  = Mark5C | Mark6 | FlexBuff |none
+#                               TYPE  = Mark5C | Mark6 | FlexBuff | eVLBI | none
 #                               DISKS = (only if TYPE=Mark6 | FlexBuff):
 #                                       argument to "set_disks=", specify on which  
 #                                       disks or module to record the experiment.
-#                                       Default for TYPE=Mark6     "mark6",
+#                                       Default for TYPE=Mark6     "mk6",
 #                                                   TYPE=FlexBuff  "flexbuff"
 #                                        i.e. all presently mounted disks on the
 #                                        indicated harware.
 #                               To use a Mark6 as FlexBuff use this:
-#                                  --recorder FlexBuff:mark6
+#                                  --recorder FlexBuff:mk6
 #                               which will record in FlexBuff format on Mark6 disks
 #
 #            --force            overwrite output files [default: don't!]
@@ -281,7 +281,20 @@ class RecorderNone(Recorder):
     __repr__         = const("None")
 
     # the null recorder has no procedures nor ready_disk/record_{on,off} commands
-    procedures       = setup_procedures = ready_disk = record_on = record_off = const(list())#lambda *_, **__: list()
+    procedures       = setup_procedures = ready_disk = record_on = record_off = checkmk5 = const(list())
+
+##############   The "eVLBI" recorder
+class RecorderEVLBI(RecorderNone):
+    __repr__         = const("eVLBI")
+
+    # Log basic recorder info - i.e. jive5ab stuff
+    procedures       = Recorder.procedures
+    #def procedures(self):
+    #    return Recorder.procedures(self)
+
+    # the eVLBI recorder only does record_{on,off} commands
+    record_on        = const_lines("mk5=net2mem=open\ndata_valid=on")
+    record_off       = const_lines("data_valid=off\nmk5=net2mem=close")
 
 
 ##############   The Mark5C recorder
@@ -319,6 +332,7 @@ class Mark5C(Recorder):
     ready_disk = const_lines("ready_disk\nbank_set?\npointers?\nbank_info?")
     record_on  = const_lines("disk_pos\ndisk_record=on\ndisk_record\ndata_valid=on")
     record_off = const_lines("data_valid=off\ndisk_record=off\ndisk_pos")
+    checkmk5   = const_lines("checkmk5")
 
 ##############   The Mark6 recorder - record in Mark6 format
 class Mark6(Recorder):
@@ -335,7 +349,7 @@ class Mark6(Recorder):
         initi.append( comment("""preconfigure as much as we can. the actual net_protocol\n
                               will be set in the setup, it is firmware dependent""") )
         initi.append( mk5("net_port=625\nmtu=9000\nnet_protocol=:{0.sockbuf}:{0.workbuf}:{0.nbuf}\nrecord=mk6:1\nrecord=nthread:2:2".format(self)) )
-        initi.append( mk5("set_disks={0}".format("mark6" if disks is None else disks)) )
+        initi.append( mk5("set_disks={0}".format("mk6" if disks is None else disks)) )
         self.procedure_lst = [initi]
 
     def procedures(self):
@@ -368,6 +382,7 @@ class Mark6(Recorder):
     ready_disk = const(mk5("set_disks?"))
     record_on  = const_lines("disk_record=on\ndisk_record\ndata_valid=on")
     record_off = const_lines("data_valid=off\ndisk_record=off")
+    checkmk5   = const_lines("checkmk5")
 
 ##############   The FlexBuff recorder - record in FlexBuff format
 class FlexBuff(Recorder):
@@ -417,6 +432,7 @@ class FlexBuff(Recorder):
     ready_disk = const(mk5("set_disks?"))
     record_on  = const_lines("disk_record=on\ndisk_record\ndata_valid=on")
     record_off = const_lines("data_valid=off\ndisk_record=off")
+    checkmk5   = const_lines("checkmk5")
 
 #############################################################################
 #
@@ -439,7 +455,7 @@ class PrintUsage(argparse.Action):
         sys.exit( usage() )
 
 # an action which (attempts to) map a recorder type string into an actual type
-recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6, 'flexbuff':FlexBuff, 'none':RecorderNone}
+recorder_mapping  = {'mark5c':Mark5C, 'mark6':Mark6, 'flexbuff':FlexBuff, 'none':RecorderNone, 'evlbi':RecorderEVLBI}
 get_recorder_type = compose(choice(recorder_mapping.__contains__, recorder_mapping.__getitem__,
                             Error("Unknown recorder type {0}".format)), str.lower)
 def recorder_type(rec):
@@ -1364,7 +1380,8 @@ def process_vex(vexfile):
             # if there was a previous scan and there's
             # there's time for postob+checkmk5 then insert that
             if prev_end_time and (scan.start - prev_end_time)>=20:
-                scanLines.extend( mk_lines("postob\ncheckmk5") )
+                scanLines.append( "postob" )
+                scanLines.extend( recorder.checkmk5() )
 
             source = sources[scan.source] 
             scanLines.extend( mk_lines("""
