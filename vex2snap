@@ -1386,7 +1386,7 @@ def process_vex(vexfile):
             source = sources[scan.source] 
             scanLines.extend( mk_lines("""
                     scan_name={scan.label_snap},{experiment_snap},{station_snap},{scan.duration},{scan.duration}\n
-                    source={scan.source},{source.ra_snap},{source.dec_snap}\n""".format(**locals())))
+                    source={scan.source},{source.ra_snap},{source.dec_snap},{source.ref_coord_frame_snap}\n""".format(**locals())))
 
             # switch to setup for current scan if different
             scan_setup = setups[scan.mode].setup
