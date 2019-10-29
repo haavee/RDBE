@@ -646,7 +646,7 @@ sec2VEXTime   = lambda seconds: decompose_seconds(SetAttr, vtactions)(seconds, V
 intSec        = compose(int, str.strip, partial(re.sub, r"s(ec)?", r""))
 
 class Scan(object):
-    __slots__ = ['mode', 'label', 'nominal_start', 'source', 'offset', 'duration', 'shift']
+    __slots__ = ['mode', 'label', 'nominal_start', 'source', 'offset', 'duration', 'shift', 'data_transfer']
     __xform__ = {'offset':intSec, 'duration':intSec}
 
     # assume we're constructed from a vexobject describing an entry in "$SCHED;"
@@ -661,22 +661,53 @@ class Scan(object):
     nominal_end = property(lambda s: s.nominal_start + s.duration)
     label_snap  = property(compose(str.lower, GetA('label')))
 
-    __repr__ = method("{0.label}: {0.source} from {0.nominal_start}+{0.duration} using {0.mode}".format)
+    __repr__ = method("{0.label}: {0.source} from {0.nominal_start}+{0.duration} using {0.mode} [{0.data_transfer}]".format)
+
+
+# get element [i] out of list l if len(l)>=i else return default
+# https://stackoverflow.com/a/2492093
+idx_get = lambda i, l, default=None: l[i] if -len(l) <= i < len(l) else default
+
+class DataTransfer(object):
+    # order of slot names should be the same as in the data_transfer line as explained below
+    __slots__ = ['station', 'method', 'filename', 'start_offset', 'end_offset']
+    __xform__ = {'start_offset':intSec, 'end_offset':intSec}
+
+    # assume we're constructed from a data_transfer line contained in a scan in the "$SCHED;" section:
+    #   scan No0012;
+    #     start=2019y298d14h52m00s; mode=sess319.C512; source=J1310+3220;
+    #     * ftp scan
+    #     data_transfer=Ar: disk2file: N19C3_ar_No0012.m5a:  180 sec:  182 sec: ;
+    #                   0   1          2                     3         4
+    #                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    #                   element indices in the "line" variable below
+    def __init__(self, line):
+        reduce(lambda a, i_k: setattr(a, i_k[1], DataTransfer.__xform__.get(i_k[1], identity)(idx_get(i_k[0], line, None))) or a,
+               enumerate(DataTransfer.__slots__), self)
+
+    # Given a parent scan object, return the actual start/end time
+    start    = method(lambda self, scan: scan.nominal_start + self.start_offset)
+    end      = method(lambda self, scan: scan.nominal_start + self.end_offset)
+    __repr__ = method("{0.method} extraction {0.start_offset} -> {0.end_offset} into {0.filename}".format)
 
 
 def station_scan(station, shift):
     # scan == (scanId, <vex scan obj>)
+    match_station = partial(eq, station)
     def station_observes(scan):
         (scanId, scanObj) = scan
         #station=Eb:    0 sec:  620 sec:   42.961 GB:   :       : 0;
         #        0      1       2          3               4      5
-        station_line      = filter(compose(partial(eq, station), GetN(0)), scanObj.getall('station'))
+        station_line      = filter(compose(match_station, GetN(0)), scanObj.getall('station'))
         station_line      = station_line[0] if station_line else None
         if not station_line:
             return None
+        # Check if a data_transfer was defined for the current station
+        data_transfer     = filter(compose(match_station, GetN(0)), scanObj.getall('data_transfer'))
         # handle shifting of the start time 
         return Scan(mode=scanObj['mode'], nominal_start=shift(mk_vextime(scanObj['start'])), source=scanObj['source'],
-                    offset=station_line[1], duration=station_line[2], label=scanId)
+                    offset=station_line[1], duration=station_line[2], label=scanId,
+                    data_transfer=DataTransfer(data_transfer[0]) if data_transfer else None)
     return station_observes
 
 # Filter the list of scans for the indicated station and also
@@ -1363,7 +1394,7 @@ def process_vex(vexfile):
         # The setup from the first scan can already be booted in initi
         setup           = setups[scans[0].mode].setup
         procedures["sched_initi"].append( setup  )
-        prev_end_time   = 0
+        prev_scan       = None
         experiment_snap = exper( vexf )
         station_snap    = userinput.station.lower()
 
@@ -1374,19 +1405,35 @@ def process_vex(vexfile):
             scanLines = [""]
 
             # allow recorders to send some initialization commands?
-            if not prev_end_time:
+            if not prev_scan:
                 scanLines.extend( recorder.ready_disk() )
 
             # if there was a previous scan and there's
-            # there's time for postob+checkmk5 then insert that
-            if prev_end_time and (scan.start - prev_end_time)>=20:
+            # time for postob+checkmk5 then insert that
+            if prev_scan and (scan.start - prev_scan.end)>=20:
                 scanLines.append( "postob" )
                 scanLines.extend( recorder.checkmk5() )
+
+            # Was there a data transfer defined for the previous scan?
+            do_autoftp = None
+            if prev_scan and prev_scan.data_transfer:
+                # the start/end extraction times depend on the previous' scan start/end
+                start_extract = sec2vextime(prev_scan.data_transfer.start(prev_scan).seconds)
+                end_extract   = sec2vextime(prev_scan.data_transfer.end(prev_scan).seconds)
+                # need to format the start/end extract as vex time
+                scanLines.append( "{prev_scan.data_transfer.method}=,{prev_scan.data_transfer.filename},{start_extract},{end_extract},".format(**locals()))
+                # Let's give the extraction time until 1m45s before the start of *this* scan
+                # Note that the autoftp will be given after scan_name/source_name to already start the telescope slewing
+                auto_start    = sec2fstime( scan.nominal_start.seconds - 105 )
+                do_autoftp    = mk_lines("""!{auto_start}\n{prev_scan.data_transfer.method}=abort,autoftp,\n""".format(**locals()))
 
             source = sources[scan.source] 
             scanLines.extend( mk_lines("""
                     scan_name={scan.label_snap},{experiment_snap},{station_snap},{scan.duration},{scan.duration}\n
                     source={scan.source},{source.ra_snap},{source.dec_snap},{source.ref_coord_frame_snap}\n""".format(**locals())))
+
+            if do_autoftp:
+                scanLines.extend( do_autoftp )
 
             # switch to setup for current scan if different
             scan_setup = setups[scan.mode].setup
@@ -1396,7 +1443,7 @@ def process_vex(vexfile):
             
             # is there time for pre-ob?
             preob_time = scan.nominal_start.seconds-10
-            if preob_time>=prev_end_time:
+            if preob_time>=prev_scan.end:
                 scanLines.extend( mk_lines("!{preob_time}\npreob".format(preob_time=sec2fstime(preob_time))) )
 
             # wait for scan start and then switch on recording
@@ -1407,11 +1454,22 @@ def process_vex(vexfile):
             # switch off the recording
             scanLines.extend( recorder.record_off(scan) )
             into_snp("\n".join(scanLines))
-            prev_end_time = scan.end
+            # This scan is now the last/previous scan
+            prev_scan     = scan
 
         # If we did observe at least one scan, finish off with a final postob/checkmk5
-        if prev_end_time:
+        if prev_scan:
             into_snp("\npostob\ncheckmk5")
+            # if that one contained a data transfer, handle it
+            if prev_scan.data_transfer:
+                # the start/end extraction times depend on the previous' scan start/end
+                start_extract = sec2vextime(prev_scan.data_transfer.start(prev_scan))
+                end_extract   = sec2vextime(prev_scan.data_transfer.end(prev_scan))
+                # need to format the start/end extract as vex time
+                into_snp("\n{prev_scan.data_transfer.method}=,{prev_scan.data_transfer.filename},{start_extract},{end_extract}".format(**locals()))
+                # Let's give the extraction time 1 minute and the actual transfer 2 minutes
+                # Note that the autoftp will be given after scan_name/source_name to already start the telescope slewing
+                into_snp("\n!+60s\n{prev_scan.data_transfer.method}=abort,autoftp\n!+120s".format(**locals()))
         # and trigger sched_end
         into_snp("\nsched_end")
 
