@@ -1443,7 +1443,7 @@ def process_vex(vexfile):
             
             # is there time for pre-ob?
             preob_time = scan.nominal_start.seconds-10
-            if preob_time>=prev_scan.end:
+            if not prev_scan or preob_time>=prev_scan.end:
                 scanLines.extend( mk_lines("!{preob_time}\npreob".format(preob_time=sec2fstime(preob_time))) )
 
             # wait for scan start and then switch on recording
@@ -1463,8 +1463,8 @@ def process_vex(vexfile):
             # if that one contained a data transfer, handle it
             if prev_scan.data_transfer:
                 # the start/end extraction times depend on the previous' scan start/end
-                start_extract = sec2vextime(prev_scan.data_transfer.start(prev_scan))
-                end_extract   = sec2vextime(prev_scan.data_transfer.end(prev_scan))
+                start_extract = sec2vextime(prev_scan.data_transfer.start(prev_scan).seconds)
+                end_extract   = sec2vextime(prev_scan.data_transfer.end(prev_scan).seconds)
                 # need to format the start/end extract as vex time
                 into_snp("\n{prev_scan.data_transfer.method}=,{prev_scan.data_transfer.filename},{start_extract},{end_extract}".format(**locals()))
                 # Let's give the extraction time 1 minute and the actual transfer 2 minutes
