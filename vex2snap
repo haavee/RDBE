@@ -939,6 +939,8 @@ def fqlist_pfb(setup):
         # count channels per IF
         for (chan, ch) in enumerate(ch_list, start=1):
             # convert channel properties to stuff we need
+            # for the PFB we must use integers to be able to look up the channel
+            # based upon its frequency
             ch_frq = int(ch.freq - ch.lo)
             iif    = if_to_inp(ch.abcd)
             ich    = lookup_fh(abs(ch_frq))  # look up channel freq in table to find index
@@ -1072,7 +1074,7 @@ def fqlist_ddc(setup):
     for ch, assign in ch_assign.iteritems():
         (dbe, ich) = assign
         # convert channel properties to stuff we need
-        ch_frq     = int(ch.freq - ch.lo)
+        ch_frq     = ch.freq - ch.lo
         iif        = if_to_inp(ch.abcd)
         setup.dbes_used.add((dbe, iif))
         # Get current pcal state
