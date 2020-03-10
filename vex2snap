@@ -941,6 +941,7 @@ def fqlist_pfb(setup):
             clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=pfbg:pfbg_1_4.bin;".format(dbe=dbe) )
             clrs[dbe].append( "rdbe_cmd={dbe},10,dbe_execute=init;".format(dbe=dbe) )
             clrs[dbe].append( "rdbe_cmd={dbe},1,dbe_fpga_bin_info?;".format(dbe=dbe) )
+            clrs[dbe].append( "rdbe_cmd={dbe},1,dbe_dot_set=;".format(dbe=dbe) )
             clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
         # count channels per IF
         for (chan, ch) in enumerate(ch_list, start=1):
@@ -1116,6 +1117,7 @@ def fqlist_ddc(setup):
         clrs[dbe].append( "rdbe_cmd={dbe},50,dbe_personality=ddc:ddc_1601583.bin".format(dbe=dbe) )
         clrs[dbe].append( "rdbe_cmd={dbe},10,dbe_execute=init;".format(dbe=dbe) )
         clrs[dbe].append( "rdbe_cmd={dbe},1,dbe_fpga_bin_info?;".format(dbe=dbe) )
+        clrs[dbe].append( "rdbe_cmd={dbe},1,dbe_dot_set=;".format(dbe=dbe) )
         clrs[dbe].append( "rdbefclr={dbe}".format(dbe=dbe) )
 
     # assert there's only one pcal state

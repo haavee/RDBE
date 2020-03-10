@@ -22,6 +22,26 @@ int itask;
 // to implement rdbe_dc_cfg with time stamp 5 seconds after current fs time
 // if this is wrong the bastard will never change freq
 // typical input command  dbe0,0:4:111.75:1
+//                             0 1 2      3
+//  with parameters:
+//  0   down converter index "<DC>"
+//  1   down converter decimation factor "<rate>"
+//  2   down converter frequency "<LO freq>"
+//  3   "dcfgmode" value - only used in stcom struct as far as I've been
+//      able to find
+//
+// however, RDBE command is:
+//         dbe_dc_cfg=<DC>:<rate>:<LO freq>:<time>
+//
+//  Until now (Mar 2020) the code in this function would blindly
+//  append the FS time to whatever was passed in, i.e. making the command
+//  being sent to the RDBE look like this:
+//          dbe_dc_cfg=<DC>:<rate>:<LO freq>:[01]:<time>
+//
+//  Update Mar 2020:
+//      fixed code to accept "rdbe_dc_cfg=dbeX,..." with "..." having three
+//      or four parameters. Fourth parameter will be processed first and
+//      then removed before sending command to RDBE
 {
     
     int ita[6]; /*for rte_time */
@@ -34,7 +54,7 @@ int itask;
     char *ptt;
     int i,j,k,ierr,nbbc;
     int npos,noff;
-    char tt;
+    char tt, term_char;
     char part_0[100];
     strcpy(dbe_command,"dbe_dc_cfg=");
     strcpy(dbe_name,"dbe0");
@@ -48,11 +68,10 @@ int itask;
     if(command->argv[0] != NULL)strcpy(dbe_name,command->argv[0]);
     if(command->argv[1] != NULL){
        strcpy(input_parm,command->argv[1]);
-       j=strlen(command->argv[1]);
-       if(command->argv[1][j-1] == ';')j=j-1; //remove possible ';' at end
-       strncat(dbe_command,command->argv[1],j);
-       strcat(dbe_command,timestamp);
 //-----------save input parameters in common------------
+// HV Mar 2020: do this *before* appending the time stamp
+//              to the command so we can support with/without
+//              dcfgmode parameter
        noff=0; //default
        if(strncmp(dbe_name,"0",1) == 0){noff=0;}
        if(strncmp(dbe_name,"1",1) == 0){noff=4;}
@@ -62,7 +81,38 @@ int itask;
        npos=nbbc+noff;  //so we get a number 0-7 to number ddc channels 1-8
        ptok=strtok(NULL,":"); strcpy(part_0,ptok); sscanf(part_0,"%d",&stm_addr->dcfgdeci[npos]);
        ptok=strtok(NULL,":"); strcpy(part_0,ptok); sscanf(part_0,"%f",&stm_addr->dcfgfq[npos]);
-       ptok=strtok(NULL,":"); strcpy(part_0,ptok); sscanf(part_0,"%d",&stm_addr->dcfgmode[npos]);//Do we miss last as no termination?
+       // HV Mar 2020: only process last parameter if one seems to be
+       //              present
+       // HV Mar 2020: also need to decide how many characters from
+       //              command->argv[1] to send to the RDBE.
+       //              Reuse the "pch" value from this section:
+       //                 if NULL this means no fourth parameter was present
+       //                 so we can copy the whole input string
+       //                 if not NULL we must find the last ":" in 
+       //                 command->argv[1] and only copy characters until
+       //                 there
+       ptok=strtok(NULL,":");
+       // Start off by accepting the whole string - i.e. only strip the
+       // terminating ';'
+       term_char = ';';
+       if( ptok!=NULL ) {
+           // Decode the value
+           strcpy(part_0,ptok); sscanf(part_0,"%d",&stm_addr->dcfgmode[npos]);
+           // Now we need to strip the last ':' and everything following it
+           term_char = ':';
+       } else {
+           // No fourth parameter in CFG (syntax is "rdbe_dc_cfg=<DBE>,<CFG>")
+           stm_addr->dcfgmode[npos] = -1;
+       }
+       // Now append the correct chunk of CFG to the actual dbe_command that
+       // we're building. Take care of potentially not finding the
+       // terminating character in which case the whole string will be
+       // copied
+       ptt = strrchr(command->argv[1], term_char);
+       j   = (ptt == NULL ? strlen(command->argv[1]) : (int)(ptt - command->argv[1]));
+       strncat(dbe_command, command->argv[1], j);
+       // Now append the timestamp
+       strcat(dbe_command, timestamp);
 //       printf("DBGCFG %d %d %d : %d %f %d\n",nbbc,noff,npos, stm_addr->dcfgdeci[npos],stm_addr->dcfgfq[npos],stm_addr->dcfgmode[npos]);
 //------------------------------------------------------
     }
