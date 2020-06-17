@@ -40,6 +40,13 @@
 #                               [default: only process scheduled scans
 #                               that are still observable - i.e. in the future]
 #
+#            --postob-duration  if you have an estimate how long your
+#                               postob+checkmk5 procedures will take you can
+#                               override the default assumption of 20s that
+#                               vex2snap uses to decide whether there is
+#                               enough time between two scans to insert
+#                               those commands
+#
 #   Description:
 #
 #   vex2snap reads the vex file(s) and extracts the useful information for the
@@ -61,7 +68,7 @@ from operator import *
 from vex.vex import Vex
 
 ##########################################################################################
-version = "0.01"
+version = "0.02"
 
 
 ################## These should be standard .... #########################################
@@ -531,6 +538,8 @@ parsert.add_argument('--ignore-utc', dest="utc_limit", default=utcsec_now, actio
                      help="Ignore current UTC time - i.e. just process all scans even when they cannot be observed anymore")
 parsert.add_argument('--shift', dest='utc_shift', type=shift, default=const(identity),
                      help="Shift all UTC time stamps in the schedule (see --help for details)")
+parsert.add_argument('--postob-duration', dest='postob_duration', type=int, default=20,
+                     help="Set minimum gap duration between scans to insert postob+checkmk5 procedure calls (default: 20 seconds)")
 parsert.add_argument("vexfiles", nargs='*', help="One or more vexfiles to process")
 
 ###################################
@@ -1423,7 +1432,7 @@ def process_vex(vexfile):
 
             # if there was a previous scan and there's
             # time for postob+checkmk5 then insert that
-            if prev_scan and (scan.start - prev_scan.end)>=20:
+            if prev_scan and (scan.start - prev_scan.end)>=userinput.postob_duration:
                 scanLines.append( "postob" )
                 scanLines.extend( recorder.checkmk5() )
 
